@@ -1,0 +1,1038 @@
+/* ==========================================================================
+   Segunda via — the carbon copy.
+
+   An instrument panel wrapped around a conversation, drawn from Brazilian bank
+   collections paperwork: NCR carbon-copy forms, boleto security paper, rubber
+   stamps, ballpoint ink. Written by hand, with custom properties and no
+   framework, because a utility library would flatten this into the generic
+   dashboard look the brief rejects.
+
+   House rules, applied everywhere below:
+     - No border radius. Forms do not have rounded corners.
+     - No box shadow, no gradient except the security-paper hatch. Paper does
+       not float.
+     - Three typefaces, three jobs, no overlap: Archivo labels the form,
+       Newsreader carries speech and nothing else, IBM Plex Mono carries every
+       machine value.
+     - Exactly one bold move, the carimbo. Everything else stays quiet.
+   ========================================================================== */
+
+:root {
+  --paper: #dce3d9;
+  --paper-2: #e9ede4;
+  --canary: #e4d9a8;
+  --ink: #1d2a2e;
+  --ink-soft: #5c6b6a;
+  --rule: #a9b6a9;
+  --stamp: #b3372a;
+  --stamp-ok: #2f6b4f;
+
+  /* Derived, not invented: the ficha's own ground taken two steps darker, for
+     the carbon rule beside a quoted utterance and the new-field flash. Keeps
+     the right panel one material. */
+  --canary-deep: #d6c88c;
+
+  --sans: "Archivo", "Helvetica Neue", "Segoe UI", Arial, sans-serif;
+  --serif: "Newsreader", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas,
+    monospace;
+
+  --gap: 18px;
+  --pad: 22px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background-color: var(--paper);
+  /* Security-paper microprint: a 45° hatch at 3.5% ink. Low enough to read as
+     texture rather than pattern, and the only background image in the file. */
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(29, 42, 46, 0.035) 0 1px,
+    transparent 1px 5px
+  );
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100%;
+}
+
+/* --- shared voices ------------------------------------------------------ */
+
+.mono {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-variant-ligatures: none;
+  letter-spacing: 0;
+}
+
+.eyebrow {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Every interactive element keeps a visible ring. Never `outline: none`
+   without a replacement — this file has no replacement, so it has no removal. */
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* --- shell and layout --------------------------------------------------- */
+
+.shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100dvh;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 62fr) minmax(0, 38fr);
+  min-height: 0;
+}
+
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px var(--gap);
+  padding: 13px var(--pad);
+  background: var(--paper-2);
+  border-bottom: 1px solid var(--rule);
+}
+
+.masthead__title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.masthead__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.masthead__field {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.masthead__key {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.masthead__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.masthead__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-soft);
+}
+
+.masthead__status.is-live .masthead__dot {
+  background: var(--stamp-ok);
+}
+
+/* Idle reads as an unfilled field rather than an off lamp: nothing has happened
+   yet, which is different from something having stopped. */
+.masthead__status.is-idle .masthead__dot {
+  background: transparent;
+  border: 1px solid var(--rule);
+}
+
+/* --- the call column ---------------------------------------------------- */
+
+.call {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  min-height: 0;
+}
+
+.call__step {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  padding: 11px var(--pad);
+  border-bottom: 1px solid var(--rule);
+}
+
+.call__caret {
+  color: var(--ink-soft);
+}
+
+.transcript {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 26px var(--pad) 8px;
+}
+
+.transcript__flow {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  max-width: 62ch;
+}
+
+/* --- utterances: NCR form fields, not chat bubbles ---------------------- */
+
+.utterance {
+  position: relative;
+  border: 1px solid var(--rule);
+  padding: 20px 20px 16px;
+}
+
+/* Pre-printed on the form before the call began: solid rule, lighter ground. */
+.utterance--agent {
+  background: var(--paper-2);
+  border-style: solid;
+}
+
+/* Filled in by hand during the call: dashed rule, the page's own ground. */
+.utterance--customer {
+  background: var(--paper);
+  border-style: dashed;
+}
+
+.utterance--error {
+  background: var(--paper);
+  border: 1px dashed var(--stamp);
+}
+
+/* The caption notches into the top rule, the way a legend sits in a fieldset.
+   Its background has to match its own block or the rule shows through it. */
+.utterance__caption {
+  position: absolute;
+  top: -8px;
+  left: 14px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  background: var(--paper-2);
+}
+
+.utterance--customer .utterance__caption,
+.utterance--error .utterance__caption {
+  background: var(--paper);
+}
+
+.utterance--error .utterance__caption {
+  color: var(--stamp);
+}
+
+.utterance__speech {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 19px;
+  line-height: 1.5;
+  font-optical-sizing: auto;
+  text-wrap: pretty;
+}
+
+.utterance__failure {
+  margin: 0 0 8px;
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.45;
+  color: var(--stamp);
+}
+
+.utterance__failure-detail {
+  margin: 0;
+  color: var(--ink-soft);
+  word-break: break-word;
+}
+
+.utterance__seal {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+/* --- o carimbo: the signature element ----------------------------------- */
+
+.carimbo {
+  position: relative;
+  display: inline-block;
+  padding: 6px 11px 5px;
+  border: 2px solid currentColor;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  line-height: 1;
+  text-transform: uppercase;
+  /* A stamp is one impression. Letting the text wrap stretches the outline to
+     the full column width and the mark stops reading as a stamp at all, so it
+     stays on one line and the narrow breakpoint shrinks it to fit instead. */
+  white-space: nowrap;
+  transform: rotate(-3deg);
+  animation: stamp-land 180ms cubic-bezier(0.2, 0.9, 0.3, 1.25) both;
+}
+
+/* One frame of ink spread: the pad's colour blooms past the outline and dries
+   away. Purely an overlay, so it never shifts the box it sits on. */
+.carimbo::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  background: currentColor;
+  opacity: 0.26;
+  pointer-events: none;
+  animation: ink-spread 220ms ease-out forwards;
+}
+
+.carimbo__step {
+  text-transform: none;
+  letter-spacing: 0.04em;
+}
+
+.carimbo--ok {
+  color: var(--stamp-ok);
+}
+
+.carimbo--transfer {
+  color: var(--stamp);
+}
+
+/* The ficha's terminal-state stamp sits square: it is a filed outcome, not a
+   stamp caught mid-landing, and a rotated box inside a narrow column fights
+   its neighbours. */
+.carimbo--flat {
+  transform: none;
+  animation: none;
+}
+
+.carimbo--flat::after {
+  animation: none;
+  opacity: 0;
+}
+
+@keyframes stamp-land {
+  0% {
+    opacity: 0;
+    transform: rotate(-3deg) scale(1.35);
+  }
+  60% {
+    opacity: 1;
+    transform: rotate(-3deg) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: rotate(-3deg) scale(1);
+  }
+}
+
+@keyframes ink-spread {
+  to {
+    opacity: 0;
+  }
+}
+
+/* --- compliance violations ---------------------------------------------- */
+
+.violations {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--stamp);
+}
+
+.violations__item {
+  display: grid;
+  gap: 3px;
+  padding-bottom: 10px;
+  font-size: 11.5px;
+  color: var(--stamp);
+}
+
+.violations__check {
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.violations__rule,
+.violations__detail {
+  color: var(--ink-soft);
+}
+
+.violations__evidence {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+/* --- turn footer -------------------------------------------------------- */
+
+.turn-footer {
+  margin: 12px 0 0;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+.turn-footer__trace {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+
+.turn-footer__trace:hover {
+  color: var(--stamp-ok);
+}
+
+/* --- stage rail --------------------------------------------------------- */
+
+.rail {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+}
+
+.rail__cell {
+  padding: 9px 10px 8px;
+  border-right: 1px dotted var(--rule);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  min-width: 0;
+}
+
+.rail__cell:last-child {
+  border-right: 0;
+}
+
+.rail__label {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.rail__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail__ms {
+  display: block;
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: var(--ink-soft);
+  min-height: 1em;
+}
+
+.rail__cell--running {
+  color: var(--ink);
+  background: var(--paper-2);
+}
+
+.rail__cell--running .rail__mark {
+  animation: pulse 900ms ease-in-out infinite;
+}
+
+.rail__cell--done {
+  color: var(--ink);
+}
+
+/* Struck through rather than hidden: `judge` runs only on confirm_terms, and a
+   hidden cell would let its absence read as a pass. Which path the turn took is
+   the information. */
+.rail__cell--skipped .rail__name,
+.rail__cell--skipped .rail__ms {
+  text-decoration: line-through;
+  color: var(--ink-soft);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* --- composer ----------------------------------------------------------- */
+
+.composer {
+  display: grid;
+  gap: 12px;
+  padding: 16px var(--pad) 18px;
+  border-top: 1px solid var(--rule);
+  background: var(--paper-2);
+}
+
+.composer__field {
+  position: relative;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+}
+
+.composer__caption {
+  position: absolute;
+  top: -8px;
+  left: 14px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  background: var(--paper-2);
+}
+
+.composer__input {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 16px 14px 12px;
+  font-family: var(--serif);
+  font-size: 18px;
+  line-height: 1.45;
+  color: var(--ink);
+  resize: vertical;
+}
+
+.composer__input::placeholder {
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.composer__input:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+.composer__input:disabled {
+  color: var(--ink-soft);
+}
+
+.composer__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.composer--closed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.composer__closed-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+}
+
+/* --- buttons ------------------------------------------------------------ */
+
+.btn {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 11px 18px;
+  border: 1px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.btn--primary {
+  background: var(--ink);
+  color: var(--paper-2);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: #14201f;
+}
+
+.btn--stamp {
+  border-color: var(--stamp);
+  color: var(--stamp);
+}
+
+.btn--stamp:hover:not(:disabled) {
+  background: var(--stamp);
+  color: var(--paper-2);
+}
+
+.btn--wide {
+  justify-self: start;
+  padding-inline: 26px;
+}
+
+.btn:disabled {
+  border-color: var(--rule);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: not-allowed;
+}
+
+/* --- empty state and case picker ---------------------------------------- */
+
+.empty {
+  align-self: start;
+  max-width: 58ch;
+  padding: 48px var(--pad);
+  display: grid;
+  gap: 22px;
+}
+
+.empty__lead {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 22px;
+  line-height: 1.35;
+  text-wrap: balance;
+}
+
+.empty__detail {
+  margin: 0;
+  color: var(--ink-soft);
+  word-break: break-word;
+}
+
+.empty__form {
+  display: grid;
+  gap: 16px;
+  padding: 22px 20px 20px;
+  border: 1px solid var(--rule);
+  background: var(--paper-2);
+}
+
+.picker {
+  position: relative;
+  display: grid;
+  gap: 7px;
+}
+
+.picker__caption {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.picker__select {
+  width: 100%;
+  appearance: none;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 11px 34px 11px 12px;
+  cursor: pointer;
+  /* A drawn caret rather than the platform one, so the control matches the
+     hairline vocabulary of every other field on the page. */
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink) 50%),
+    linear-gradient(135deg, var(--ink) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) calc(50% + 1px),
+    calc(100% - 13px) calc(50% + 1px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.picker__preview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 18px;
+  margin: 0;
+  padding-top: 4px;
+  border-top: 1px solid var(--rule);
+}
+
+.picker__preview dt {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  padding-top: 8px;
+}
+
+.picker__preview dd {
+  margin: 2px 0 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.empty__thesis {
+  margin: 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+  font-family: var(--serif);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+  text-wrap: pretty;
+}
+
+/* --- the ficha: the tear-off stub --------------------------------------- */
+
+.ficha {
+  position: relative;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--canary);
+  padding: 20px var(--pad) 40px;
+}
+
+/* The seam is a perforation, not a border: the right panel is the copy you
+   tear off and file, which is exactly what it is. */
+.ficha::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 2px;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--rule) 0 4px,
+    transparent 4px 9px
+  );
+}
+
+.ficha__title {
+  margin: 0 0 18px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.ficha__body {
+  display: grid;
+  gap: 22px;
+}
+
+.ficha__section {
+  display: grid;
+  gap: 2px;
+}
+
+.ficha__heading {
+  margin: 0 0 8px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--rule);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+/* Leader dots run from the label to the value, the fill-in-the-dots device off
+   a printed form. It gives the panel its rhythm without a single box.
+
+   The value column is `minmax(0, max-content)` and the zero floor is
+   load-bearing. A bare `max-content` sizes the column to the text's *unwrapped*
+   width and then refuses to shrink, so `overflow-wrap` on the value never gets
+   to act — the box is already wide enough that nothing needs to wrap. The row
+   then overflows the panel, and because `.ficha` sets `overflow-y: auto` (which
+   forces the used `overflow-x` to `auto` too) the whole ficha gains a
+   horizontal scrollbar and every *other* row's right-aligned value slides out
+   of sight. The panel looks blank rather than broken, which is why this is
+   worth a paragraph.
+
+   It is not a hypothetical either: it is guaranteed by the thing this panel
+   exists to show. Commitments are captured verbatim and never normalised, so a
+   spoken amount lands here as "oitocentos e quarenta e sete reais e trinta e
+   dois" — five times the width of "R$ 847,32", and the demo account's own
+   balance produces it on the default happy path. The zero floor lets the column
+   shrink and the value wrap instead. */
+.ficha__row {
+  display: grid;
+  grid-template-columns: max-content minmax(12px, 1fr) minmax(0, max-content);
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 4px;
+  margin-inline: -4px;
+}
+
+.ficha__label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.ficha__leader {
+  border-bottom: 1px dotted var(--rule);
+  transform: translateY(-3px);
+}
+
+.ficha__value {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.ficha__value.is-muted {
+  color: var(--ink-soft);
+}
+
+.ficha__value.is-negative {
+  color: var(--stamp);
+}
+
+.ficha__row.is-fresh {
+  animation: field-arrive 900ms ease-out;
+}
+
+/* A background flash, no movement: the ficha is a document being filled in,
+   and paper does not slide. */
+@keyframes field-arrive {
+  0%,
+  35% {
+    background: var(--canary-deep);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+.ficha__empty {
+  margin: 4px 0 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.ficha__entry {
+  padding: 8px 0 12px;
+  border-bottom: 1px dotted var(--rule);
+}
+
+.ficha__entry:last-child {
+  border-bottom: 0;
+}
+
+/* The customer's own words, verbatim, against a carbon rule. Never summarised
+   and never reformatted — this indent is the thesis made visible. */
+.ficha__evidence {
+  margin: 8px 0 0 6px;
+  padding-left: 11px;
+  border-left: 2px solid var(--canary-deep);
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  text-wrap: pretty;
+}
+
+.ficha__terminal {
+  padding: 4px 0 12px;
+}
+
+.ficha__note {
+  margin: 12px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+
+/* --- narrow viewports --------------------------------------------------- */
+
+.ficha-strip {
+  border-top: 1px solid var(--rule);
+  background: var(--canary);
+}
+
+.ficha-strip__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px var(--pad);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The expanded strip has to leave the conversation on screen. At 55vh it did
+   not: the step line, the toggle, the panel and the composer together exceeded
+   the column, the transcript's 1fr row collapsed to zero, and the transcript
+   painted straight over the strip's own header. 40vh plus the transcript floor
+   in the breakpoint below keeps every row above its minimum. */
+.ficha--inline {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding-top: 4px;
+  border-top: 1px dotted var(--rule);
+}
+
+.ficha--inline::before {
+  display: none;
+}
+
+@media (max-width: 899px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* The transcript keeps a floor. Without it the auto rows — step line, ficha
+     strip, composer — can claim the whole column and leave the 1fr row at zero
+     height, at which point the transcript overflows instead of scrolling and
+     paints over whatever sits beneath it. */
+  .call {
+    grid-template-rows: auto minmax(72px, 1fr) auto auto auto;
+  }
+
+  .transcript__flow {
+    max-width: none;
+  }
+}
+
+@media (max-width: 560px) {
+  :root {
+    --pad: 15px;
+  }
+
+  .utterance__speech {
+    font-size: 17px;
+  }
+
+  .empty__lead {
+    font-size: 19px;
+  }
+
+  /* Six mono cells will not fit 360px in a row. Two rows of three keeps every
+     stage visible, which is the rail's entire job — hiding stages to save
+     width would delete the information. */
+  .rail {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .rail__cell:nth-child(3) {
+    border-right: 0;
+  }
+
+  .rail__cell:nth-child(-n + 3) {
+    border-bottom: 1px dotted var(--rule);
+  }
+
+  .composer__actions .btn {
+    flex: 1 1 auto;
+  }
+
+  /* "TEXTO APROVADO · §disclose_and_consent" is 38 monospace characters — the
+     longest impression the protocol can produce. At 9px it clears 360px with
+     room to spare, which is why the stamp can stay one line down there. */
+  .carimbo {
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    padding: 5px 8px 4px;
+  }
+
+  .ficha--inline .carimbo {
+    white-space: normal;
+  }
+}
+
+/* --- reduced motion ------------------------------------------------------
+   The stamp is the page's one bold move and the first thing to go. It appears
+   instantly and untransformed; the ink spread never runs; the rail stops
+   pulsing; the ficha flash becomes a colour change with no easing to watch. */
+
+@media (prefers-reduced-motion: reduce) {
+  .carimbo {
+    animation: none;
+    transform: rotate(-3deg);
+  }
+
+  .carimbo::after {
+    animation: none;
+    opacity: 0;
+  }
+
+  .rail__cell--running .rail__mark {
+    animation: none;
+  }
+
+  .ficha__row.is-fresh {
+    animation: none;
+    background: var(--canary-deep);
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

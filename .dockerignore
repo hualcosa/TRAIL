@@ -1,0 +1,60 @@
+# Build context for the shared image. The Dockerfile copies exactly three
+# things — pyproject.toml, src/ and protocol/ — so everything else is context
+# transfer with no build output, and research/ alone is over a megabyte of
+# markdown.
+
+# Secrets. The API key is supplied at run time via env_file, never baked in.
+.env
+.env.*
+!.env.example
+
+# Version control and tooling metadata
+.git
+.gitignore
+.dockerignore
+.github
+.vscode
+.idea
+
+# Python build and cache artefacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv*/
+venv/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Not needed to build or run the image. `db/schema.sql` is mounted into the
+# postgres container, not into this one; tests run on the host.
+research/
+tests/
+db/
+docs/
+
+# The frontend. It builds from its own context (./ui) with its own Dockerfile
+# and never enters the Python image, so `ui/` alone is enough — the two paths
+# after it are spelled out anyway, because they are the ones that hurt if a
+# later edit narrows this rule: a populated node_modules is tens of thousands
+# of files and hundreds of megabytes of context transfer for a build that would
+# not read one byte of it, and dist/ is build output masquerading as source.
+ui/
+ui/node_modules/
+ui/dist/
+
+Makefile
+docker-compose.yml
+docker-compose.*.yml
+Dockerfile
+
+# Root-level markdown only — BLUEPRINT.md, INTERFACES.md, README.md. Docker
+# matches a bare `*.md` against single path components, so this leaves nested
+# files alone, and the re-include below makes that non-accidental: the
+# approved clinical text must reach the image or the agent refuses to start.
+*.md
+!protocol/**
