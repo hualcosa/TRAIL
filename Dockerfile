@@ -1,14 +1,13 @@
 # syntax=docker/dockerfile:1
 #
-# One image, three roles.
+# One image, two roles.
 #
-# `agent`, `evals` and the CLI `client` are the same installed package invoked
-# with three different commands. They share a dependency set, a settings
-# object, a model layer and a database layer; the only thing that differs is
-# the process entrypoint. Three near-identical Dockerfiles would be duplication
-# wearing an architecture costume (BLUEPRINT §8), and it would also let the
-# three drift apart — the eval harness must run against exactly the code the
-# client talks to, or the eval stops being evidence.
+# The `agent` service and the CLI `client` are the same installed package
+# invoked with two different commands. They share a dependency set, a settings
+# object and a wire contract; the only thing that differs is the process
+# entrypoint. Two near-identical Dockerfiles would be duplication wearing an
+# architecture costume, and would also let the two drift apart — a client that
+# is built differently from the service it drives measures something else.
 #
 # Two stages: the builder has uv and a compiler-free wheel install; the runtime
 # has neither uv nor build tooling, just the virtualenv and the package.
@@ -49,8 +48,16 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # the image should carry the code, not a path pointing at a build directory
 # the runtime stage does not have.
 COPY src/ ./src/
+COPY examples/ ./examples/
+# `--reinstall-package trail` is not belt and braces, it is the fix for a bug
+# that costs an afternoon. The uv cache mount survives between builds, and uv
+# keys a local project's built wheel on its declared version — so with the
+# version unchanged it reuses the cached wheel and **source edits never reach
+# the image**. The build succeeds, the container starts, and it runs the code
+# from before your change. Reinstalling only this package keeps the dependency
+# cache, which is where the build time actually is.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev --no-editable
+    uv sync --locked --no-dev --no-editable --reinstall-package trail
 
 # ---------------------------------------------------------------------------
 # Stage 2 — runtime
@@ -70,21 +77,22 @@ COPY --from=builder --chown=trail:trail /opt/venv /opt/venv
 
 WORKDIR /app
 
-# The approved collections script is baked in so the image runs standalone and
-# so every image digest pins the exact protocol version it would speak. Compose
-# also bind-mounts ./protocol read-only over this path, which lets a reviewer
-# edit the regulated content and restart without a rebuild — the protocol is a
-# git-versioned file, not a service (BLUEPRINT §8).
-COPY --chown=trail:trail protocol/ /app/protocol/
+# `examples/` is copied in with the package rather than mounted, because the
+# agent is selected by name at runtime (TRAIL_AGENT) and an image that cannot
+# resolve the name it is configured with fails at startup instead of at the
+# first request.
+#
+# The documents come too, and this is load-bearing rather than tidy: the guide
+# example answers *from* them, and in the image the package lives under
+# site-packages, whose parents hold no README. Without these the agent runs,
+# looks healthy, and answers every question with "not documented".
+COPY --chown=trail:trail README.md docker-compose.yml ./
 
 USER trail
 
-# Documentation, not a binding: one image serves the agent on 8000 and the
-# evals harness on 8001 (INTERFACES §3, §4).
-EXPOSE 8000 8001
+EXPOSE 8000
 
 # No entrypoint script. The role *is* the command, so compose selects it with
 # `command:` and `docker compose run --rm client trail chat` works without a
-# shim deciding what "client" means. This is the default for a bare
-# `docker run`; every compose service overrides it explicitly.
-CMD ["uvicorn", "trail.agent.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# shim deciding what "client" means.
+CMD ["uvicorn", "trail.app:app", "--host", "0.0.0.0", "--port", "8000"]

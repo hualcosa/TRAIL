@@ -1,18 +1,16 @@
-# Banco Aurora early-stage collections agent — local stack.
+# TRAIL — local stack.
 #
-# Five services, four of which are the system and one of which (`client`) is
-# how a human drives it. `make up` brings up the four; `make chat` and
-# `make eval` run the fifth on demand.
+# `agent`, `ui`, `postgres` and the six-container Langfuse stack are the
+# system; `client` is how a human drives it. `make up` brings up the system,
+# `make chat` runs the client on demand.
 #
-# The service boundaries here are the argument, not an accident of packaging
-# (BLUEPRINT §6): `langfuse` answers "how long did it take and where did it
-# stall", `evals` answers "was the promised amount written down as the customer
-# said it". Those are different questions and a single tool that claims both
-# blurs the distinction this repo exists to make legible.
+# The `client` boundary is the argument, not an accident of packaging: it
+# speaks the same HTTP a browser speaks, so nothing it demonstrates depends on
+# a code path a real caller does not have.
 
 name: trail
 
-# The image is built once and shared by agent, evals and client. Compose
+# The image is built once and shared by agent and client. Compose
 # deduplicates identical build+image pairs, so this anchor is one build.
 x-trail-image: &trail-image
   build:
@@ -36,7 +34,11 @@ x-trail-env: &trail-env
   # if you change the demo keys below, or ingestion 401s in a background
   # thread and the trace list stays empty with nothing in the agent's log.
   TRAIL_OTEL_EXPORTER_OTLP_HEADERS: ${TRAIL_OTEL_EXPORTER_OTLP_HEADERS:-Authorization=Basic cGstbGYtdHJhaWwtZGVtbzpzay1sZi10cmFpbC1kZW1v,x-langfuse-ingestion-version=4}
-  TRAIL_PROTOCOL_PATH: ${TRAIL_PROTOCOL_PATH:-/app/protocol/collections_1_30_dpd.md}
+  # The three dials. Defaults are the safe ones: both gates on, and state in
+  # memory so a first `make up` needs no schema and loses nothing that matters.
+  TRAIL_AGENT: ${TRAIL_AGENT:-trail_guide}
+  TRAIL_GUARDRAILS: ${TRAIL_GUARDRAILS:-both}
+  TRAIL_CHECKPOINTER: ${TRAIL_CHECKPOINTER:-postgres}
   # The one address here that is deliberately NOT a container name. The agent
   # stamps a Langfuse deep link onto every response so the UI can offer "see
   # the trace", and that link is resolved by a browser on the host, not by a
@@ -74,7 +76,7 @@ services:
       # Published so host-run integration tests and `psql` can reach it.
       - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      # `agent` and `evals` gate on this: connecting before the init script
+      # `agent` gates on this: connecting before the init script
       # finishes gives a database with no tables, which fails much later and
       # much less legibly than not starting.
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trail} -d ${POSTGRES_DB:-trail}"]
@@ -84,18 +86,18 @@ services:
       start_period: 10s
 
   # -------------------------------------------------------------------------
-  # agent — the conversation service (INTERFACES §3).
+  # agent — the conversation service.
   #
-  # Stateless by design: every turn is written to Postgres and nothing that
-  # matters lives in process memory. That is what makes the state-and-
-  # concurrency problem BLUEPRINT §8 leaves open a real next step rather than a
-  # rewrite.
+  # Stateless in process: conversation state lives in the checkpointer, so a
+  # thread survives a restart when TRAIL_CHECKPOINTER=postgres and does not
+  # when it is `memory`. Which of those is true is a one-line setting and is
+  # reported in the startup log rather than left to be discovered.
   # -------------------------------------------------------------------------
   agent:
     <<: *trail-image
     command:
       - uvicorn
-      - trail.agent.app:app
+      - trail.app:app
       - --host
       - 0.0.0.0
       - --port
@@ -109,12 +111,6 @@ services:
     environment:
       <<: *trail-env
       TRAIL_SERVICE_NAME: trail-agent
-    volumes:
-      # Read-only: the agent reads the approved collections script and can never
-      # write it. Bind-mounted so editing the protocol is a restart, not a
-      # rebuild — it is a git-versioned file reviewed as regulated content, not
-      # a service (BLUEPRINT §8).
-      - ./protocol:/app/protocol:ro
     ports:
       - "${AGENT_PORT:-8000}:8000"
     depends_on:
@@ -130,53 +126,6 @@ services:
         - python
         - -c
         - import httpx; httpx.get('http://localhost:8000/healthz').raise_for_status()
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 20s
-
-  # -------------------------------------------------------------------------
-  # evals — the golden-set harness (INTERFACES §4).
-  #
-  # It drives the agent over HTTP at TRAIL_AGENT_BASE_URL rather than importing
-  # its functions. An eval that calls internal functions tests the code; one
-  # that calls the interface tests the system — serialization, timeouts, and
-  # the contract the real client sees (BLUEPRINT §6). The compose dependency
-  # on `agent: service_healthy` is what makes that honest.
-  # -------------------------------------------------------------------------
-  evals:
-    <<: *trail-image
-    command:
-      - uvicorn
-      - trail.evals.app:app
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8001"
-    env_file:
-      # Optional so `make down`, `make logs` and `make clean` still work on a
-      # checkout with no .env. The targets that actually need credentials
-      # depend on the file in the Makefile and say so.
-      - path: .env
-        required: false
-    environment:
-      <<: *trail-env
-      TRAIL_SERVICE_NAME: trail-evals
-    ports:
-      - "${EVALS_PORT:-8001}:8001"
-    depends_on:
-      agent:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      langfuse-web:
-        condition: service_started
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - import httpx; httpx.get('http://localhost:8001/healthz').raise_for_status()
       interval: 10s
       timeout: 5s
       retries: 6
@@ -243,14 +192,8 @@ services:
     environment:
       <<: *trail-env
       TRAIL_SERVICE_NAME: trail-client
-      # The evals service has no entry in `Settings` (INTERFACES §7), so its
-      # address reaches the CLI as a plain environment variable. `Settings`
-      # is extra="ignore", so this is inert for the agent and evals processes.
-      TRAIL_EVALS_BASE_URL: ${TRAIL_EVALS_BASE_URL:-http://evals:8001}
     depends_on:
       agent:
-        condition: service_healthy
-      evals:
         condition: service_healthy
     stdin_open: true
     tty: true

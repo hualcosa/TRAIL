@@ -1,7 +1,7 @@
-# Banco Aurora early-stage collections agent — control surface.
+# TRAIL — control surface.
 #
-# Ten targets, and between them they are the whole demo: bring the stack up,
-# hold a call, run the golden set, read the numbers. Run `make` for the list.
+# Between them these targets are the whole demo: bring the stack up, hold a
+# conversation, watch the pipeline behind it. Run `make` for the list.
 #
 # Everything that needs the compose network runs inside it; everything that
 # does not (formatting, linting, unit tests) runs on the host with uv, so a
@@ -40,21 +40,21 @@ HOST_ENV := \
 	TRAIL_OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:$(LANGFUSE_WEB_PORT)/api/public/otel/v1/traces
 
 .DEFAULT_GOAL := help
-.PHONY: help up down logs chat eval ui-dev test test-integration fmt lint clean
+.PHONY: help up down logs chat ui-dev test test-integration fmt lint clean
 
 help: ## List the targets
 	@grep -hE '^[a-z][a-z-]*:.*?## ' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[1;36m%-18s\033[0m %s\n", $$1, $$2}'
 
-up: .env ## Build the images and start ui, agent, evals, postgres and the Langfuse stack (ports override: make up AGENT_PORT=8010 EVALS_PORT=8011 POSTGRES_PORT=55432 UI_PORT=5273)
+up: .env ## Build the images and start agent, ui, postgres and the Langfuse stack (ports override: make up AGENT_PORT=8010 POSTGRES_PORT=55432 UI_PORT=5273)
 	$(COMPOSE) up --build --detach --wait
 	@printf '  waiting for langfuse'; \
 	for i in $$(seq 1 60); do \
 	  curl -sf http://localhost:$(LANGFUSE_WEB_PORT)/api/public/health >/dev/null && break; \
 	  printf '.'; sleep 3; \
 	done; printf '\n'
-	@printf '\n  ui        http://localhost:%s\n  agent     http://localhost:%s/docs\n  evals     http://localhost:%s/docs\n  langfuse  http://localhost:%s\n\n' \
-		'$(UI_PORT)' '$(AGENT_PORT)' '$(EVALS_PORT)' '$(LANGFUSE_WEB_PORT)'
+	@printf '\n  agent     http://localhost:%s/docs\n  langfuse  http://localhost:%s\n\n  make chat  to talk to it\n\n' \
+		'$(AGENT_PORT)' '$(LANGFUSE_WEB_PORT)'
 
 down: ## Stop the stack, keeping the database volume
 	$(COMPOSE) down --remove-orphans
@@ -62,11 +62,8 @@ down: ## Stop the stack, keeping the database volume
 logs: ## Follow logs from every service
 	$(COMPOSE) logs --follow --tail=100
 
-chat: .env ## Hold a collections call with the agent from the CLI
+chat: .env ## Hold a conversation with the agent from the CLI
 	$(COMPOSE) run --rm client trail chat
-
-eval: .env ## Run the golden set against the agent and print the report
-	$(COMPOSE) run --rm client trail eval
 
 ui-dev: ## Run the Vite dev server on the host against the running stack (`make up` first)
 	cd ui && npm install && npm run dev

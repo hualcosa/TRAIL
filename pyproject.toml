@@ -5,33 +5,40 @@ build-backend = "hatchling.build"
 [project]
 name = "trail"
 version = "1.0.0"
-description = "Banco Aurora inbound early-stage collections agent — capture, don't interpret; route every record to a specialist."
+description = "TRAIL — Traced Runtime for Agents, Instrumented Locally. A generic LLM+tools agent runtime with pluggable input/output guardrails and an observable pipeline."
 requires-python = ">=3.12"
 
-# Floors here, exact versions in uv.lock. The floors say what the code needs —
-# `openai>=2.0` is the Responses API with `text.format.json_schema`, the
-# structured-output surface INTERFACES §6 makes binding — and the lock file
-# says what was actually resolved, tested and built into the image. The
-# Dockerfile syncs with `--locked`, so a lock that has drifted from this file
-# fails the build instead of silently shipping a different resolution. That is
-# the same argument the repo makes about pinning model versions, one layer
-# down (BLUEPRINT §8).
+# Floors here, exact versions in uv.lock. The floors say what the code needs,
+# and the lock file says what was actually resolved, tested and built into the
+# image. The Dockerfile syncs with `--locked`, so a lock that has drifted from
+# this file fails the build instead of silently shipping a different
+# resolution. That is the same argument the repo makes about pinning model
+# versions, one layer down (BLUEPRINT §8).
 dependencies = [
     "fastapi>=0.141",
     "uvicorn[standard]>=0.52",
     "pydantic>=2.13",
     "pydantic-settings>=2.15",
     "psycopg[binary,pool]>=3.3",
-    "openai>=2.0",
     "httpx>=0.28",
     "rich>=15.0",
-    # The conversation graph. `>=1.0` is the release that made `interrupt()` and
-    # `Command(goto=...)` the supported way to write a human-in-the-loop graph,
-    # which is what `trail.agent.machine` is: one node per step, paused between
-    # turns, with the checkpointer holding every in-flight call. No LLM comes in
-    # with it — the graph is pure and the only model calls in the system are in
-    # `trail.agent.llm`.
+    # The agent itself. `create_agent` lives in `langchain`, not `langgraph` —
+    # v1 moved the prebuilt agent out of `langgraph.prebuilt` and made it the
+    # main surface of `langchain`, with the middleware system that `before_agent`
+    # / `after_agent` guardrails hang off. It returns a LangGraph graph.
+    "langchain>=1.0",
+    # `langchain` pulls `langgraph` transitively, but this repo imports from it
+    # directly — `Runtime`, `get_stream_writer`, the savers and the stores — and
+    # a dependency you import is a dependency you declare.
     "langgraph>=1.0",
+    # Durable threads. `InMemorySaver` ships with langgraph and loses every
+    # conversation on restart; this is the checkpointer and the cross-thread
+    # store that make `TRAIL_CHECKPOINTER=postgres` mean something.
+    "langgraph-checkpoint-postgres>=2.0",
+    # The provider binding for `init_chat_model("openai:...")`. `TRAIL_LLM_BASE_URL`
+    # reaches `ChatOpenAI(base_url=...)` through it, so any OpenAI-compatible
+    # endpoint works without a second integration package.
+    "langchain-openai>=1.0",
     # No YAML or front-matter library: `trail.protocol` needs one scalar out of
     # the protocol file's front matter and reads it with a regex, so a
     # dependency here would be resolved, locked and shipped into the runtime
@@ -50,12 +57,15 @@ dev = [
 ]
 
 [project.scripts]
-# The CLI is where telephony and audio attach later (BLUEPRINT §8). Today it
-# speaks HTTP to the agent, exactly as the eval harness does.
-trail = "trail.client.cli:main"
+# The CLI speaks HTTP to the agent, exactly as the eval harness does — never
+# to the agent's internals.
+trail = "trail.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/trail"]
+# `examples` ships in the image: the demo agent is mounted by name at runtime
+# (TRAIL_AGENT), so it has to be importable from an installed wheel, not just
+# from a source checkout.
+packages = ["src/trail", "examples"]
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +118,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["trail"]
+known-first-party = ["trail", "examples", "tests"]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests assert on values; a bare comparison in a test is the assertion, and

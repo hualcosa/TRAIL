@@ -9,18 +9,22 @@ serialised: ``repr`` and ``str`` render it as ``**********``, and
 ``model_dump(mode="json")`` emits the same mask. Read it exactly once, at the
 call site, via ``settings.llm_api_key.get_secret_value()``.
 
-The model is reached through the OpenAI SDK's Responses API. That is a
-deliberate portability choice rather than a vendor one: OpenAI, Fireworks AI,
-Together AI, DeepInfra and DeepSeek's own Responses endpoint all speak the same
-dialect, so moving between them is ``TRAIL_LLM_BASE_URL`` plus ``TRAIL_MODEL``
-and no code change. See ``README.md`` for the cost and compliance reasoning
-behind the current default.
+The model is reached through LangChain's ``init_chat_model``, bound to an
+OpenAI-compatible endpoint. That is a deliberate portability choice rather than
+a vendor one: OpenAI, Fireworks AI, Together AI, DeepInfra and DeepSeek all
+speak the same dialect, so moving between them is ``TRAIL_LLM_BASE_URL`` plus
+``TRAIL_MODEL`` and no code change.
+
+Three fields describe the *shape* of the agent rather than its credentials —
+``guardrails``, ``checkpointer`` and ``agent``. They are the dials this
+scaffold exists to expose: which gates run, where conversation state lives, and
+which example is mounted. Each is a registry key, so an unknown value fails at
+startup with the valid set in the message rather than at the first request.
 """
 
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
 from typing import Literal
 
 from pydantic import SecretStr
@@ -64,6 +68,15 @@ class Settings(BaseSettings):
 
     max_tokens: int = 2048
 
+    #: Per-model rates as JSON, merged over the table in ``trail.costs``::
+    #:
+    #:     TRAIL_MODEL_PRICES='{"my-model": {"input": 0.5, "output": 1.5}}'
+    #:
+    #: A model with no rate reports a cost of ``None`` rather than zero, so
+    #: this is how a deployment prices a model this repository has never heard
+    #: of without waiting for a release.
+    model_prices: str = ""
+
     # --- Infrastructure ----------------------------------------------------
     database_url: str = "postgresql://trail:trail@postgres:5432/trail"
     agent_base_url: str = "http://agent:8000"
@@ -102,8 +115,26 @@ class Settings(BaseSettings):
 
     service_name: str = "trail-agent"
 
-    # --- Approved collections content ---------------------------------------
-    protocol_path: Path = Path("/app/protocol/collections_1_30_dpd.md")
+    # --- The dials ----------------------------------------------------------
+
+    #: Which gates run. This is the whole guardrail configuration: the runtime
+    #: turns it into a middleware list, and a mode that omits a gate still
+    #: emits that gate's stage frame with ``status="skip"``. A guardrail you
+    #: cannot see is not a guardrail you can trust, so switching one off is
+    #: visible on the pipeline rail rather than silent.
+    guardrails: Literal["both", "input", "output", "none"] = "both"
+
+    #: Where conversation state lives between turns. ``memory`` loses every
+    #: thread when the process restarts and is the right default for tests and
+    #: a first run; ``postgres`` is what makes a thread outlive the container
+    #: that started it. Same agent code either way — this is the point of the
+    #: checkpointer being a constructor argument.
+    checkpointer: Literal["memory", "postgres"] = "memory"
+
+    #: Which example agent to mount. Resolved against the registry in
+    #: ``trail.runtime.registry``; the shipped one is ``trail_guide``, which
+    #: answers questions about this repository.
+    agent: str = "trail_guide"
 
 
 @lru_cache(maxsize=1)

@@ -41,14 +41,39 @@ Three pillars. The acronym is not decoration — it is the component list.
 
 | | Pillar | What it is | Status |
 |---|---|---|---|
-| **T·R** | **Traced Runtime** | A FastAPI conversation service where every turn is an OTel span tree, streamed to the browser as it runs. Six pipeline stages, each with its latency, its tokens and its cost. | **`extraction`** |
-| **I** | **Instrumentation** | OTel → OTLP/HTTP → self-hosted Langfuse, wired. LLM spans arrive typed as generations with model, tokens and cost, not as anonymous spans. Trace deep links stamped onto API responses, so a record in the UI is one click from the span that produced it. Postgres tables for call records, turn traces and LLM traces. | **`shipped`** |
-| **L** | **…Locally** — and the golden set | An evaluation harness that drives your agent over HTTP, computes metrics against **pre-registered thresholds**, classifies failures into a taxonomy, and detects regression against a previous run. | **`extraction`** |
+| **T·R** | **Traced Runtime** | An LLM+tools agent with **switchable input and output guardrails**, a swappable checkpointer, and a FastAPI service that streams every step of a turn as it happens. The loop is LangChain's `create_agent`; what TRAIL adds is the seam and the reporting. | **`shipped`** |
+| **I** | **Instrumentation** | OTel → OTLP/HTTP → self-hosted Langfuse, wired. Model calls arrive typed as **generations** with model, tokens and cost, not as anonymous spans. Trace deep links stamped onto API responses, so an answer is one click from the span that produced it. | **`shipped`** |
+| **L** | **…Locally** — and the golden set | An evaluation harness that drives your agent over HTTP, computes metrics against **pre-registered thresholds**, classifies failures into a taxonomy, and detects regression against a previous run. | **`designed`** |
 
-The fourth thing, which does not fit the acronym and matters as much: **a browser demo that shows the
-pipeline rather than the tokens.** A stage rail where a skipped stage renders struck through instead
-of hidden — because which path the turn took is the information, and a hidden cell lets a skipped
-stage pass for a successful one. **`extraction`**
+The fourth thing, which does not fit the acronym and matters as much: **a pipeline rail that shows
+the machinery rather than the tokens.** A guardrail that is switched off still reports itself,
+rendered struck through instead of hidden — because which path the turn took is the information, and
+a hidden cell lets a skipped stage pass for a successful one. **`shipped`** in the CLI,
+**`extraction`** in the browser.
+
+### The guardrail dial
+
+`TRAIL_GUARDRAILS` takes one of four values, and it is composition rather than configuration: the
+runtime turns it into a middleware list, so there is no flag threaded through the gates that a gate
+could disagree with.
+
+| Value | Input gate | Output gate |
+|---|---|---|
+| `both` (default) | runs | runs |
+| `input` | runs | reported as **skipped** |
+| `output` | reported as **skipped** | runs |
+| `none` | reported as **skipped** | reported as **skipped** |
+
+```
+both      ▪entrada 0ms  ▪modelo 840ms  ▪search_docs 31ms  ▪modelo 410ms  ▪saída 0ms
+input     ▪entrada 0ms  ▪modelo 840ms  ▪search_docs 31ms  ▪modelo 410ms  ▫s̶a̶í̶d̶a̶ pulado
+blocked   ▪entrada BLOQUEADO  ▫m̶o̶d̶e̶l̶o̶ pulado  ▫s̶a̶í̶d̶a̶ pulado
+            ↳ prompt_injection · a mensagem tenta sobrescrever as instruções
+```
+
+A guardrail that leaves no measurement is not a guardrail, it is an intention. That is the whole
+difference between a gate and a sentence in a system prompt, and it is why switching one off is
+visible rather than silent.
 
 ---
 
@@ -119,13 +144,11 @@ layer before deciding whether to trust the rest.
 
 ```
   browser ──▶  ui :5173  ──nginx, /api/ ──┐
-  client (CLI) ──────────────HTTP─────────┤
-                                          ├──▶  agent :8000  ──▶  your LLM provider
-  evals  :8001 ──────────────HTTP─────────┘        │
-                                                   └──  protocol/, read-only bind mount
-
-  agent and evals both write ──▶  postgres :5432   records · turn traces · LLM traces ·
-                                                    eval runs · findings
+  client (CLI) ──────────────HTTP─────────┤──▶  agent :8000  ──▶  your LLM provider
+                                          │       │
+                                          │       └── examples/, mounted by TRAIL_AGENT
+                                          │
+  agent ──▶  postgres :5432    threads · checkpoints · cross-thread memory
   every service exports spans ──▶  langfuse :3000
 ```
 
@@ -133,12 +156,11 @@ layer before deciding whether to trust the rest.
 |---|---|
 | `ui` | The demo surface. nginx serving a built Vite bundle, and the reverse proxy that puts the app and the API on **one origin** — which is why there is no CORS middleware anywhere in this repository. |
 | `agent` | Your conversation. TRAIL owns the HTTP shell, the streaming, the persistence and the spans. You own what happens between them. |
-| `evals` | The golden-set harness. Drives the agent over the same HTTP interface the client uses. |
-| `postgres` | Five tables, applied once by the init hook. No migration tool — five tables do not need one, and a migration tool exercised only by a fresh volume is a tool that has never been tested. |
+| `postgres` | Conversation state, when `TRAIL_CHECKPOINTER=postgres`. The tables are LangGraph's and it creates and migrates them itself — declaring a hand-written copy here would mean being wrong about it on the first upgrade. `db/schema.sql` is therefore almost empty, on purpose. |
 | `langfuse` | Self-hosted v4 — web, worker, ClickHouse, Redis, MinIO and its own Postgres. Six containers, because LLM observability is a different shape of problem from request tracing. The traces are the product, not a debugging aid you add later. |
 
-**One image, three roles.** `agent`, `evals` and the CLI are the same build with a different entry
-point, so a dependency drift between the harness and the thing it measures is not possible.
+**One image, two roles.** The `agent` service and the CLI are the same build with a different entry
+point, so a dependency drift between a client and the thing it drives is not possible.
 
 ---
 
@@ -151,17 +173,19 @@ trying to abstract the *agent*. The agent is exactly the part you should write y
 
 | You write | TRAIL provides |
 |---|---|
-| Your state machine, graph, or loop | The HTTP shell around it, and the SSE pipeline that reports it |
-| Your prompts and model calls | Token and cost accounting, LLM trace persistence, span wrapping |
-| Your domain models | The persistence layer, the schema shape, the record contract |
-| Your assertions about what must never happen | The gate seam that runs them on every outbound utterance, and fails the turn when one trips |
+| Your system prompt and your tools | The agent loop, the HTTP shell, and the SSE pipeline that reports every step of it |
+| Your **checks** — pure functions from text to a verdict | The **gates** that run them at the edges, short-circuit the turn with your fallback, and report themselves on the rail |
+| Your model choice | Token and cost accounting, span wrapping, and the attributes that make a call arrive in Langfuse as a typed generation |
+| Nothing about persistence | A checkpointer and a store as swappable slots: in memory for tests, in Postgres for anything a user comes back to |
 | Your golden set and your thresholds | The runner, the metrics engine, the failure taxonomy, regression detection, the report |
-| Your protocol or approved-content files | Versioned loading, slot rendering, fail-fast on a missing slot |
 
-**What TRAIL deliberately does not abstract:** the compliance gate's *rules*, and the state machine's
-*steps*. Both are attempts to generalise a thing that should stay concrete. A pluggable compliance
-layer that satisfies two domains prevents nothing in either — the gate only works because it knows
-which step it is standing in.
+An example agent is a system prompt, some plain functions, and two checks — see
+`examples/trail_guide/`. It imports no framework at all, which is what makes it portable to whatever
+this runtime is built on next.
+
+**What TRAIL deliberately does not abstract:** the *content* of a guardrail. TRAIL owns when a check
+runs, what happens when it fails, and how it reports itself. What counts as a violation is yours, and
+a pluggable rule engine that satisfied two domains would prevent nothing in either.
 
 ---
 
@@ -214,23 +238,34 @@ generic. Deletion separates the two reasonably well. Not perfectly.
 
 ## 7. The example agent
 
-**`designed`**
+**`shipped`** — `examples/trail_guide/`, mounted by `TRAIL_AGENT=trail_guide`.
 
-TRAIL ships with the smallest conversation that still exercises every pillar: a three-field intake
-agent. It asks for a name, a date and a quantity, restates them, and asks the user to confirm.
+TRAIL ships with an agent that explains TRAIL. Two tools, both offline: `search_docs` greps this
+repository's documentation and returns passages with `file:line`, and `stack_status` lists the
+services and their ports. Clone the repo, run `make chat`, and the thing that answers is the thing
+you just cloned.
 
-It has one rule, and the rule is the domain-free version of every regulated-content thesis TRAIL was
-built to serve:
+Self-reference is doing real work here rather than being cute. The guide is the validation surface —
+a real model, real tools, both gates, a rail with real measurements — *and* the onboarding, so it
+does not rot the way an example nobody runs does.
 
-> **Never state a value the user did not say.**
+Its two checks are the shape most agents actually need, and neither is enforceable by a prompt:
 
-That rule is checkable by a deterministic assertion, which means the example ships with a real gate
-rather than a decorative one. Five golden-set cases: one clean run, one correction mid-conversation,
-one ambiguous date, one user who never confirms, one who supplies a value the agent must refuse to
-invent.
+| Gate | Check | Refuses |
+|---|---|---|
+| input | `injection` | attempts to rewrite the agent's instructions — and costs no tokens, because it runs before the model |
+| output | `no_secret_leak` | anything with the shape of a credential, or this process's own key |
+| output | `no_fabricated_ids` | a `TRAIL_*` setting **that does not exist** |
 
-It is deliberately boring. An example that is interesting competes with your agent for attention, and
-the first thing you do with a scaffold is delete its example.
+`no_fabricated_ids` is the one to study. Ask *"how do I enable turbo mode in TRAIL?"* and any model
+will produce a confident, plausible, entirely invented `TRAIL_TURBO_MODE`. The check compares every
+`TRAIL_*` name in the answer against a set derived from `Settings`' own fields — so it is a set
+lookup rather than a judgement, it runs in microseconds, it names the offending identifier as
+evidence, and it cannot go stale, because adding a setting adds it to the set.
+
+That is the domain-free version of every regulated-content thesis TRAIL was built to serve:
+
+> **Never state an identifier the system does not have.**
 
 ---
 
@@ -262,7 +297,9 @@ argued and declined.
 | Not included | Why |
 |---|---|
 | **An agent abstraction** | The reason TRAIL exists. A base class for "an agent" is the fastest way to make the scaffold's opinions load-bearing on your design. Write your loop. |
-| **A pluggable compliance engine** | See §5. Rules that satisfy every domain constrain none of them. |
+| **A pluggable rule engine** | See §5. TRAIL owns when a check runs and what happens when it fails. Rules that satisfy every domain constrain none of them. |
+| **A hand-written trace table** | Per-call tokens, cost and latency live in Langfuse. A local table duplicating them would be a second source of truth for the same numbers — the one this repository can least afford to have disagree with itself. |
+| **Token streaming, for now** | The `messages` channel is already requested from the graph, so the wire contract does not change when it lands. What streams today is the pipeline, which is the honest thing to show for an agent whose answer is assembled from tool results. |
 | Authentication and multi-tenancy | One local stack, one trust boundary, no real data. Auth without a real identity provider and a real data boundary is theatre, and it models none of what makes auth hard. |
 | Database migrations | Five tables. `make clean` drops the volume and the init hook applies the schema again. |
 | An operator console | The `ui` service is a demo of one conversation, not a workplace. No queue, no assignment, no sign-off, no auth. Those belong to a product, and the specialist review step they would serve is the one thing a person should do. |
@@ -274,28 +311,34 @@ argued and declined.
 
 ## 10. Repository layout
 
-**`designed`** — the target shape.
+**`shipped`**, except where marked.
 
 ```
 README.md                     This file
-INTERFACES.md                 The interface reference, written out of shipped code — not proposed to it
-docker-compose.yml            The five services
-Dockerfile                    One image, three roles
-Makefile                      The control surface: up · chat · eval · test · lint · clean
+docker-compose.yml            The services
+Dockerfile                    One image, two roles
+Makefile                      The control surface: up · chat · test · lint · clean
 .env.example                  Every variable, with its default and the reason for it
-db/schema.sql                 Five tables, applied once by the Postgres init hook
+db/schema.sql                 Almost empty, and §4 says why
 
 src/trail/
-  config.py                   pydantic-settings, TRAIL_ prefix
-  db.py                       psycopg3 + pool, plain SQL
+  config.py                   pydantic-settings, TRAIL_ prefix — and the three dials
+  costs.py                    Per-model rates; an unpriced model costs None, never zero
   telemetry.py                OTel SDK → OTLP → Langfuse, and the trace deep links
-  protocol.py                 Versioned approved content, slot rendering, fail-fast on a gap
-  runtime/                    The HTTP shell, the SSE turn pipeline, the gate seam
-  evals/                      runner · metrics (thresholds) · report · regression
-  client/                     CLI — and where a transport layer attaches later
+  app.py                      FastAPI: POST /threads, /threads/{id}/turns/stream
+  cli.py                      trail chat — the conversation, and the rail behind it
+  runtime/
+    agent.py                  build_agent: model + tools + gates + persistence
+    checkpointers.py          memory | postgres, as a swappable slot
+    events.py                 The wire vocabulary: StageEvent, and the SSE helpers
+    turns.py                  One turn as a sequence of frames; both endpoints drain it
+    middleware/
+      guards.py               GuardVerdict, InputGuard, OutputGuard, and the dial
+      trace.py                The rail, and the span attributes Langfuse promotes
+  evals/                      `designed` — runner · thresholds · taxonomy · report
 
-example/                      The three-field intake agent, and its five golden cases
-ui/                           The demo surface: Vite bundle + nginx reverse proxy
+examples/trail_guide/         The agent that explains TRAIL. Two tools, three checks
+ui/                           `extraction` — the browser surface, mid-rewrite
 tests/                        Unit tests offline; integration tests behind a marker
 ```
 
