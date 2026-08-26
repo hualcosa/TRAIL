@@ -145,10 +145,15 @@ buys no tokens — and the rail says so rather than leaving the absence to be in
 | Postgres | `localhost:5432` |
 | Demo UI | http://localhost:5173 — **`extraction`**, mid-rewrite, currently broken |
 
-**You do have to sign in to Langfuse, once.** The *account* is provisioned headlessly, so there is
-no signup form — but the browser session is not, and an unauthenticated tab answers every trace URL
-with a permanent "Loading…" and a console full of 401s rather than saying what is wrong. The
-identity is fixed: `demo@trail.local` / `trail-demo-password`.
+**You do have to sign in to Langfuse, once.** Langfuse v4 OSS has no unauthenticated mode — the
+only auth switches it exposes are "disable signup" and "disable password login", and the second
+forces SSO. So the *account* is provisioned headlessly and there is no signup form, but the browser
+session is not, and an unauthenticated tab answers every trace URL with a permanent "Loading…" and a
+console full of 401s rather than a sign-in page.
+
+The identity is fixed — `demo@trail.local` / `trail-demo-password`, and `make up` prints it — and
+`AUTH_SESSION_MAX_AGE` is set to a year, so this is one login per machine rather than one every
+fortnight.
 
 Every port is overridable on the command line, because you will eventually run two instances at once
 and they will collide: `make up AGENT_PORT=8010 POSTGRES_PORT=55432 UI_PORT=5273`.

@@ -53,8 +53,11 @@ up: .env ## Build the images and start agent, ui, postgres and the Langfuse stac
 	  curl -sf http://localhost:$(LANGFUSE_WEB_PORT)/api/public/health >/dev/null && break; \
 	  printf '.'; sleep 3; \
 	done; printf '\n'
-	@printf '\n  agent     http://localhost:%s/docs\n  langfuse  http://localhost:%s\n\n  make chat  to talk to it\n\n' \
+	@printf '\n  agent     http://localhost:%s/docs\n  langfuse  http://localhost:%s\n' \
 		'$(AGENT_PORT)' '$(LANGFUSE_WEB_PORT)'
+	@printf '            sign in once: %s / %s\n\n  make chat  to talk to it\n\n' \
+		"$$(grep -E '^LANGFUSE_INIT_USER_EMAIL=' .env | cut -d= -f2)" \
+		"$$(grep -E '^LANGFUSE_INIT_USER_PASSWORD=' .env | cut -d= -f2)"
 
 down: ## Stop the stack, keeping the database volume
 	$(COMPOSE) down --remove-orphans
