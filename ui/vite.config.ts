@@ -4,16 +4,16 @@ import react from "@vitejs/plugin-react";
 /**
  * Dev server config for the demo UI.
  *
- * The browser only ever calls relative paths (`/api/calls`, `/api/demo/cases`),
+ * The browser only ever calls relative paths (`/api/threads`, `/api/healthz`),
  * so the agent service never needs CORS middleware — in dev this proxy makes the
  * two same-origin, and in compose nginx does the same job with the same prefix.
  * The `rewrite` strips `/api` because the agent service mounts its routes at the
- * root: it serves `POST /calls`, not `POST /api/calls`.
+ * root: it serves `POST /threads`, not `POST /api/threads`.
  *
  * `selfHandleResponse: false` is the default and is what keeps SSE working. The
  * failure mode worth naming: any middleware that reads the proxied body to
  * completion before writing it — a compression layer, a response interceptor, a
- * `buffer` option — turns `POST /calls/{id}/turns/stream` into a single blob
+ * `buffer` option — turns `POST /threads/{id}/turns/stream` into a single blob
  * that arrives when the turn is already over, and the stage rail then plays its
  * whole animation in one frame. The proxy must forward chunks as they land, so
  * nothing here is allowed to touch the response body.

@@ -1,66 +1,52 @@
 /**
- * The composer — where the demo driver speaks as the customer.
+ * Where the reader types.
  *
  * Enter sends and Shift+Enter opens a line, which is the convention every
  * messaging surface has trained into people's hands. While a turn is in flight
- * the field and both buttons are disabled and the send button *says* so rather
- * than only looking so: a greyed control with an unchanged label is
- * indistinguishable from a click that did not register, and this demo is
- * watched by people who will click twice.
+ * the field is disabled and the button *says* so rather than only looking so: a
+ * greyed control with an unchanged label is indistinguishable from a click that
+ * did not register, and this demo is watched by people who will click twice.
  *
- * Once the call finishes the whole composer is replaced by its terminal state
- * and a way to start over. Leaving a disabled field on screen would invite one
- * more attempt at a call that has already been recorded and closed.
+ * The field grows with its content up to a ceiling, then scrolls. A fixed
+ * two-row box hides the end of anything longer, which is where a typo is.
  */
 
 import { useEffect, useRef, useState } from "react";
-import { TERMINAL_LABELS } from "../format";
-import type { TerminalState } from "../types";
 
-interface ComposerProps {
-  busy: boolean;
-  finished: TerminalState | null;
-  onSend: (utterance: string) => void;
-  onUnreachable: () => void;
-  onRestart: () => void;
-}
+/** Rows, in pixels, before the field stops growing and starts scrolling. */
+const MAX_HEIGHT = 200;
 
 export function Composer({
   busy,
-  finished,
   onSend,
-  onUnreachable,
-  onRestart,
-}: ComposerProps) {
+}: {
+  busy: boolean;
+  onSend: (message: string) => void;
+}) {
   const [text, setText] = useState("");
   const field = useRef<HTMLTextAreaElement | null>(null);
 
-  // Return focus to the field the moment the turn lands, so a demo driver can
-  // type the next customer line without reaching for the mouse.
+  // Return focus the moment the turn lands, so the next question can be typed
+  // without reaching for the mouse.
   useEffect(() => {
-    if (!busy && !finished) field.current?.focus();
-  }, [busy, finished]);
+    if (!busy) field.current?.focus();
+  }, [busy]);
 
-  if (finished) {
-    return (
-      <div className="composer composer--closed">
-        <p className="composer__closed-label">
-          <span className="eyebrow">Chamada encerrada</span>
-          <span className="mono">{TERMINAL_LABELS[finished]}</span>
-        </p>
-        <button type="button" className="btn btn--primary" onClick={onRestart}>
-          Nova chamada
-        </button>
-      </div>
-    );
-  }
+  // Reset before measuring: scrollHeight only shrinks if the element is
+  // allowed to, so without this the field grows and never comes back.
+  useEffect(() => {
+    const node = field.current;
+    if (!node) return;
+    node.style.height = "auto";
+    node.style.height = `${Math.min(node.scrollHeight, MAX_HEIGHT)}px`;
+  }, [text]);
 
-  const submit = () => {
-    const value = text.trim();
-    if (!value || busy) return;
+  function submit() {
+    const trimmed = text.trim();
+    if (!trimmed || busy) return;
+    onSend(trimmed);
     setText("");
-    onSend(value);
-  };
+  }
 
   return (
     <form
@@ -70,18 +56,18 @@ export function Composer({
         submit();
       }}
     >
-      <div className="composer__field">
-        <label className="composer__caption" htmlFor="composer-input">
-          Fala do cliente
+      <div className="composer__pill">
+        <label className="sr-only" htmlFor="composer-input">
+          Mensagem
         </label>
         <textarea
           id="composer-input"
           ref={field}
           className="composer__input"
-          rows={2}
+          rows={1}
           value={text}
           disabled={busy}
-          placeholder="Fale como o cliente…"
+          placeholder="Pergunte sobre o TRAIL…"
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
@@ -90,22 +76,21 @@ export function Composer({
             }
           }}
         />
-      </div>
-      <div className="composer__actions">
         <button
           type="submit"
-          className="btn btn--primary"
-          disabled={busy || text.trim() === ""}
+          className="composer__send"
+          disabled={busy || !text.trim()}
+          aria-label={busy ? "Processando" : "Enviar"}
         >
-          {busy ? "Processando…" : "Enviar"}
-        </button>
-        <button
-          type="button"
-          className="btn btn--stamp"
-          disabled={busy}
-          onClick={onUnreachable}
-        >
-          Encerrar como não atendida
+          {busy ? (
+            <span className="composer__spinner" aria-hidden="true" />
+          ) : (
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"
+              fill="none" stroke="currentColor" strokeWidth="2"
+              strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 19V5M5 12l7-7 7 7" />
+            </svg>
+          )}
         </button>
       </div>
     </form>

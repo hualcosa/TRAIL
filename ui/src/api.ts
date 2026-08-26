@@ -7,15 +7,19 @@
  * base URL, no credentials and no CORS handling: there is no cross-origin
  * request to configure. The one absolute URL in the whole UI is `trace_url`,
  * which the backend builds because only the backend knows the browser-reachable
- * address of Jaeger.
+ * address of Langfuse.
+ *
+ * Everything below the SSE heading is unchanged from the version written for a
+ * different agent, and that is the point: the framing is `event:` and `data:`
+ * over the same four names, so a rewrite of what the service *means* left the
+ * machinery that reads it untouched.
  */
 
 import type {
-  DemoCases,
-  StartCallResponse,
+  StartThreadResponse,
+  ThreadListResponse,
+  ThreadResponse,
   TurnStreamEvent,
-  AccountProfile,
-  CallRecord,
 } from "./types";
 
 const API = "/api";
@@ -64,30 +68,39 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function fetchDemoCases(): Promise<DemoCases> {
-  const response = await fetch(`${API}/demo/cases`);
+async function getJson<T>(path: string): Promise<T> {
+  const response = await fetch(`${API}${path}`);
   if (!response.ok) throw await readError(response);
-  return (await response.json()) as DemoCases;
+  return (await response.json()) as T;
 }
 
-export function startCall(
-  profile: AccountProfile,
-  caseId: string | null,
-): Promise<StartCallResponse> {
-  return postJson<StartCallResponse>("/calls", {
-    profile,
-    case_id: caseId,
-  });
+/**
+ * Open a conversation.
+ *
+ * No body: the agent, its greeting and the guardrail mode are the service's to
+ * decide, and it returns all three so the client can label the conversation
+ * without a second request.
+ */
+export function startThread(): Promise<StartThreadResponse> {
+  return postJson<StartThreadResponse>("/threads", {});
 }
 
-export function markUnreachable(
-  callId: string,
-  reason: string,
-): Promise<CallRecord> {
-  return postJson<CallRecord>(`/calls/${callId}/unreachable`, {
-    call_id: callId,
-    reason,
+/** The conversation list, most recently used first. */
+export function fetchThreads(limit = 50): Promise<ThreadListResponse> {
+  return getJson<ThreadListResponse>(`/threads?limit=${limit}`);
+}
+
+/** Reopen a conversation. A thread nobody has spoken to answers with no messages. */
+export function fetchThread(threadId: string): Promise<ThreadResponse> {
+  return getJson<ThreadResponse>(`/threads/${threadId}`);
+}
+
+/** Drop a conversation from the list. The checkpoint itself stays. */
+export async function deleteThread(threadId: string): Promise<void> {
+  const response = await fetch(`${API}/threads/${threadId}`, {
+    method: "DELETE",
   });
+  if (!response.ok) throw await readError(response);
 }
 
 // ---------------------------------------------------------------------------
@@ -186,26 +199,27 @@ export async function* readSse(
 }
 
 /**
- * Submit one customer turn and yield the pipeline as it happens.
+ * Send one message and yield the pipeline as it happens.
  *
  * The response is a stream rather than a payload, so `fetch` resolving only
  * means the headers arrived — the turn itself is still running. Anything that
  * fails before the stream opens (the service down, the proxy unreachable) comes
  * back as a thrown `ApiError`; anything that fails inside the turn arrives as an
  * `error` frame and is followed by a `trace` frame, so a failed turn is still
- * traceable in Jaeger. Callers must handle both.
+ * traceable in Langfuse. Callers must handle both.
+ *
+ * The `!response.ok` check below is now narrow rather than dead: this endpoint
+ * answers 200 even for a failed turn, so it only fires on a rejected request
+ * body or a proxy that never reached the service.
  */
 export async function* streamTurn(
-  callId: string,
-  customerUtterance: string,
+  threadId: string,
+  message: string,
 ): AsyncGenerator<TurnStreamEvent> {
-  const response = await fetch(`${API}/calls/${callId}/turns/stream`, {
+  const response = await fetch(`${API}/threads/${threadId}/turns/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({
-      call_id: callId,
-      customer_utterance: customerUtterance,
-    }),
+    body: JSON.stringify({ message }),
   });
   if (!response.ok) throw await readError(response);
 
@@ -215,7 +229,7 @@ export async function* streamTurn(
       data = JSON.parse(frame.data);
     } catch {
       // A frame we cannot parse is dropped rather than fatal: the stream still
-      // has a `trace` frame to deliver and the call is still open.
+      // has a `trace` frame to deliver and the thread is still open.
       continue;
     }
     switch (frame.event) {

@@ -1,206 +1,206 @@
-# Segunda via — design plan
+# The browser surface
 
-The demo UI for the Banco Aurora 1–30 DPD collections agent. Audience: technical
-leadership and compliance reviewers. Single job: make the product's thesis visible —
-**the model listens, it never speaks.** Every word the customer hears is
-compliance-approved text; every captured field traces back to the customer's own words.
+The demo UI for TRAIL. Audience: engineers evaluating whether this scaffold is
+worth building on, and technical leadership deciding the same thing one level up.
 
-Subject world: Brazilian bank collections paperwork. NCR carbon-copy forms, boleto
-security paper, rubber stamps, ballpoint ink. Not a chat app — an instrument panel
-wrapped around a conversation.
+Single job: **make the machinery visible without making it the subject.**
+
+The conversation is the subject. Under every answer sits the rail — which gates
+ran, which were switched off, how long the model took, what it cost, and a link
+to the span tree. That is the claim: an agent's behaviour should be arguable,
+not merely plausible.
 
 ---
 
-## Pass 1 — the plan
+## Pass 4 — the conversation redesign
 
-### Color
+> Passes 1–3 designed a different interface for a different product: a
+> collections agent whose spoken words were pre-approved text, rendered as an
+> NCR carbon-copy form with a tear-off compliance panel. That product no longer
+> exists in this repository, and the document that argued for it asserted the
+> opposite of what is now true. Rather than patch it, this replaces it. The
+> reasoning that survived is folded in below and marked.
 
-Fixed by the brief, used with these assignments:
+### What changed, and why the old thesis inverted
 
-| token | value | where it lands |
-| --- | --- | --- |
-| `--paper` | `#DCE3D9` | page ground, customer utterance blocks |
-| `--paper-2` | `#E9EDE4` | header, agent utterance blocks, composer, active rail cell |
-| `--canary` | `#E4D9A8` | the ficha panel, and nothing else |
-| `--ink` | `#1D2A2E` | body text, primary buttons |
-| `--ink-soft` | `#5C6B6A` | labels, meta, `—` (not asked), evidence quotes |
-| `--rule` | `#A9B6A9` | every hairline, the perforation, leader dots |
-| `--stamp` | `#B3372A` | `TRANSFERIDO`, errors, `não`, disputes |
-| `--stamp-ok` | `#2F6B4F` | `TEXTO APROVADO`, the live status dot |
+The old premise was **"the model listens, it never speaks"** — every customer-
+facing sentence came verbatim from an approved protocol, and the interface was
+built to make that legible: serif for spoken words, a stamp reading
+`TEXTO APROVADO`, a form-field treatment instead of chat bubbles.
 
-One derived value: `--canary-deep #D6C88C`, the carbon rule beside a
-`source_utterance` and the background of the ficha's new-field flash. Derived rather
-than invented, so the ficha stays one material.
+The runtime is now generic. `turns.py` returns the last assistant message, so
+**the model speaks and only speaks**. Every visual device built to argue the old
+thesis is now an argument for something false, and the empty-state paragraph
+that said so out loud went from honesty to a lie on a screen whose whole point
+is not claiming what it cannot source.
 
-Single committed light look, no dark mode.
+What survives is the *reflex* rather than the conclusion: say what is measured,
+show what was skipped, and never render a number nothing produced.
 
-### Type
+---
 
-Three faces, three jobs, no overlap. The split is the argument the page is making —
-**speech is human, everything else is machine.**
-
-- **Archivo** — ALL CAPS, 11px, weight 600, tracking `.12em`. Printed form field
-  labels: section headers, row labels, eyebrows, buttons.
-- **Newsreader** — 19px/1.5, `optical-sizing: auto`. Spoken words *only*. Agent
-  utterances and customer utterances. Nothing else is ever set in it, so the
-  reader learns that serif = someone said this out loud. Italic at 15px for a
-  `source_utterance`.
-- **IBM Plex Mono** — 12–13px. The machine layer: step ids, the stage rail, ms,
-  tokens, cost, trace id, extraction values, account numbers, tri-state words.
-
-Every family gets a real fallback stack; one `<link>` to fonts.googleapis.com with
-`display=swap`.
-
-### Layout
-
-Header bar, then two columns. Left ~62%: the call — a step line, the transcript
-(scrolls), the live stage rail, the composer pinned to the bottom. Right ~38%: FICHA
-DA CHAMADA on canary, its own scroll. Under 900px it becomes one column and the ficha
-collapses to a summary strip above the composer that expands on tap.
+## Layout
 
 ```
-┌────────────────────────────────────────────────────────┬───────────────────────┐
-│ BANCO AURORA · COBRANÇA 1–30 DPD   protocolo 8F2C · ● ligada                   │
-├────────────────────────────────────────────────────────┼───────────────────────┤
-│ passo ▸ verify_right_party                             ┊ FICHA DA CHAMADA      │
-│ ┌─ AGENTE ─────────────────────────────────┐           ┊ ───────────────────   │
-│ │ Bom dia. Aqui é a assistente…            │           ┊ CONTA                 │
-│ │                       ╱TEXTO APROVADO╱   │           ┊ TITULAR ···· Beatriz  │
-│ └──────────────────────────────────────────┘           ┊ SALDO ······ 847,32   │
-│   142 ms · 318 tok · US$ 0,0004 · ver trace ↗          ┊ ───────────────────   │
-│ ┌╌ CLIENTE ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐           ┊ CAPTURA               │
-│ ╎ Sou eu sim, Beatriz Almeida…             ╎           ┊ IDENTIDADE ···· sim   │
-│ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘           ┊ CONSENTIMENTO ····· — │
-│ ▪extrair ▪julgar ▫avançar ▫gate ▫gravar ▫encerrar      ┊ ───────────────────   │
-├────────────────────────────────────────────────────────┤ PROMESSAS             │
-│ [ Fale como o cliente…                       ] ENVIAR  ┊ (nenhuma ainda)       │
-└────────────────────────────────────────────────────────┴───────────────────────┘
+┌────────────┬─────────────────────────────────────────────────┐
+│ + Nova     │  TRAIL  trail_guide  guardrails both  ec652a56 ☾│
+│            ├─────────────────────────────────────────────────┤
+│ o que é a  │   ◆ AGENTE                                      │
+│ esteira…   │   A esteira é a pipeline rail do TRAIL…         │
+│            │   ┌──────────────────────────┐  ← fenced block, │
+│ quais      │   │ ASCII diagram            │    scrolls itself │
+│ serviços…  │   └──────────────────────────┘                  │
+│            │   ▪entrada 0ms ▪modelo 1.2s ▪search_docs 3ms    │
+│            │   ▪saída 0ms · 1.0k in · 35 out · US$ 0.0002    │
+│            │   ver trace ↗                                    │
+│            │                    ╭──────────────────────────╮ │
+│            │                    │ e os guardrails?         │ │
+│            │                    ╰──────────────────────────╯ │
+│            │   ┌─────────────────────────────────────────┐   │
+│  memory:   │   │ Pergunte sobre o TRAIL…            [↑] │   │
+│  não persiste  └─────────────────────────────────────────┘   │
+└────────────┴─────────────────────────────────────────────────┘
 ```
 
-### Signature
+**Three regions, no fourth.** An earlier plan gave the rail a collapsible right
+drawer. It was cut: the rail belongs under the answer it measures, because data
+next to its own effect needs no correlating. A panel would have made the reader
+match a row to a message by eye.
 
-**O carimbo.** Every agent utterance carries a rubber stamp: outlined box, rotated
--3°, IBM Plex Mono ALL CAPS, `TEXTO APROVADO · §{step}` in `--stamp-ok`, or
-`TRANSFERIDO` in `--stamp` when the compliance gate forced a transfer. It lands —
-scale 1.35 → 0.96 → 1, opacity 0 → 1, ~180ms ease-out, with a one-frame ink spread
-(a `currentColor` overlay at 28% that fades in 220ms). Fully suppressed under
-`prefers-reduced-motion`: it appears instantly, untransformed.
-
-This is the one bold move. Everything else stays quiet: no shadows, no border radius,
-no gradients beyond the paper hatch, one animation per interaction.
+**Below 1024px** the sidebar overlays instead of splitting the width, and it
+starts closed every time — the persisted preference governs the wide layout
+only. A phone that restored "open" would greet its reader with a list covering
+the thing they came to read.
 
 ---
 
-## Pass 2 — critique, and what changed
+## Messages, asymmetric
 
-Four things in pass 1 were defaults I would have produced for any similar page.
+The user is bubbled; the agent is not. That is what ChatGPT and Claude do, and
+copying it is not imitation: an unbubbled agent reads as *the system's output
+surface* rather than as *another person's turn*, which is the honest description.
+A bubble on both sides asserts two speakers.
 
-**1. Speech bubbles.** Pass 1 had utterances as rounded blocks, agent left, customer
-right, with an avatar and a timestamp. That is every chat app ever shipped and it
-argues the opposite of the thesis — bubbles say *two people are talking*, when the
-point is that one side is a form being read aloud.
-**Changed to:** utterances are **NCR form fields**. A hairline box with the caption
-notched into its top rule (`AGENTE`, `CLIENTE`), fieldset-style. The two are
-distinguished by rule *style*, not by side or color: the agent block is **solid** —
-pre-printed on the form — and the customer block is **dashed** — filled in by hand.
-That encodes something true about which words existed before the call started. No
-avatars, no timestamps, no alignment split.
+> *Carried from Pass 2.* The original rejected bubbles outright, for a reason
+> that was correct then — bubbles say two people are talking, and one side was a
+> form being read aloud. The asymmetric form keeps the distinction and drops the
+> premise that no longer holds.
 
-**2. Cards.** Pass 1 gave the ficha a white card with 8px radius and a soft shadow.
-Generic SaaS, and it makes the ficha float above a page whose whole subject is paper.
-**Changed to:** the ficha is a **tear-off stub**. It sits directly on canary carbon
-with no elevation, and the seam between the two columns is a **perforation** — a
-repeating dash down the divider, the way a boleto detaches from its receipt. The
-right panel is the copy you tear off and file, which is exactly what it is.
-Inside, rows are ruled with **leader dots** between label and value
-(`TITULAR ········ Beatriz A. N.`), the fill-in-the-dots device off a real form,
-which also gives the panel its rhythm without a single box.
-
-**3. Status pills.** Pass 1 had the CAPTURA rows as colored pills, and the terminal
-state as a badge. Pills are the house style of every admin dashboard and they smuggle
-in a judgement: green *sim* reads as good news, which is not something a collections
-record is allowed to imply.
-**Changed to:** tri-state rows read as bare mono words — `—`, `sim`, `não`. `—` in
-`--ink-soft` means *not asked*, which is a genuinely different fact from *no* and the
-brief is right to insist it stay visible. Only `não` takes color (`--stamp`), because
-a refusal is the thing a reviewer scans for.
-
-**4. Fabricated header meta.** The wireframe shows `protocolo v1 · gpt-5.6-luna`, but
-the service exposes no version endpoint — `/healthz` returns `{"status": "ok"}` and
-the protocol and model versions only arrive on `CallRecord` when the call finishes.
-Hardcoding `v1` would put a fact on a compliance screen that the screen cannot source,
-which is the exact failure this product exists to avoid.
-**Changed to:** `protocolo` shows the **call reference** — the Brazilian
-customer-service reading of the word, the short form of `call_id`, available the
-moment the call opens and the thing a reviewer would actually quote. `modelo` reads
-`—` until the record lands and then prints `record.model` verbatim. The header never
-displays a value it did not receive.
-
-**One accessory removed.** Pass 1 also had a rotated `2ª VIA` watermark in the header
-and ruled writing lines behind the composer textarea. Both were the same joke the
-stamp is already telling, told twice more and worse. Cut.
+**A refused turn is the third treatment and gets the most.** Red mark, red rule
+down the left of the text, the label `RECUSADO` instead of `AGENTE`, and every
+violation in full — check, rule, detail, and the offending evidence. This is the
+moment the interface justifies itself; collapsing it to the word "blocked" would
+waste it.
 
 ---
 
-## Pass 3 — what looking at it caught
+## The rail
 
-Four things survived the plan and died in the browser. Recorded because three of
-them are the kind of bug that only a screenshot finds.
+Three rules, each of which has been got wrong at least once:
 
-**The opening utterance printed `0 ms · 0 tok · US$ 0,0000`.** The agent speaks
-first, no extraction runs, and there is nothing to measure — but the footer was
-built from a fixed template, so it filled the gap with zeros. An absent
-measurement rendered as a claimed one, on the screen whose entire argument is
-that it only shows what it can source. Every `TurnMetrics` field is now nullable
-and the footer is assembled from the parts that exist; the opening turn shows
-its trace link alone.
+**A skipped stage renders struck through, never hidden.** A guardrail switched
+off and a guardrail that ran and passed must not look alike — and a hidden cell
+reads as neither, it reads as nothing.
 
-**The stamp read `§VERIFY_RIGHT_PARTY`.** `text-transform: uppercase` is right
-for TEXTO APROVADO and wrong for a step id — upper-cased, it stops looking like
-the identifier a reviewer can grep the traces for. The id now keeps its own case
-inside the stamp.
+**A blocked stage gets its own glyph, not only its own colour.** `✗` against
+`▪` and `▫`. Colour is lost in a screenshot, in a printout, and to a reader who
+cannot distinguish red from grey.
 
-**The status dot said "encerrada" before any call existed.** Two states where
-there are three: a page with no call open is not an ended call. Now `sem chamada`
-with a hollow dot, `ligada`, `encerrada`.
+**The order is arrival order. Nothing sorts it.** The service emits a
+switched-off gate's skip from the hook where that gate would have run,
+specifically so no client has to reconstruct the sequence — and any sort able to
+reposition a skip is also able to scramble the real interleaving of model and
+tool calls, which is the ordering a reader is reading for.
 
-**The expanded mobile ficha painted over itself.** At 55vh the step line, the
-toggle, the panel and the composer together exceeded the column; the transcript's
-`1fr` row collapsed to literally zero and the transcript overflowed on top of the
-strip's own header. Fixed at both ends — the panel caps at 40vh, and the
-transcript row carries a `minmax(72px, 1fr)` floor so no combination of auto rows
-can starve it again.
+The rail is a **list, not a grid**. An earlier version was six fixed cells,
+which was possible when the pipeline had six named stages. A tool contributes
+its own name and fires once per call; the model fires once per tool round. The
+count is unbounded and the vocabulary is the agent's.
 
-Verified in the browser, not assumed: SSE frames arrive through the Vite proxy
-300ms apart rather than in one blob; the parser reassembles frames from 7-byte
-chunks that split mid-JSON and mid-UTF-8; the rail renders `julgar` struck
-through as `pulado` when the step is not confirm_terms; `prefers-reduced-motion`
-leaves the stamp with `animation-name: none`, no scale, and the ink spread at
-zero opacity; 360px has no horizontal scroll.
+**No label is looked up here.** `label` arrives on the wire. A dictionary in the
+frontend is how the previous version of this interface ended up knowing one
+agent's words and no other's.
 
 ---
 
-## Honesty note, carried into the code
+## Color
 
-There is no token stream. The LLM never writes a word the customer hears
-(`src/trail/agent/llm.py`), so agent utterances are verbatim compliance-approved
-protocol text retrieved whole. What streams is the per-turn **pipeline**, as SSE:
-six stages, their latency, their tokens, their cost.
+`light-dark()` per token, so a colour is one line and the two themes cannot
+drift apart. Both are shipped; neither is a retrofit.
 
-The typewriter reveal of the approved text is **client-side and cosmetic**. It is
-labelled as such on the empty state, in prose the reviewer reads before the first
-call:
+| token | light | dark | where it lands |
+| --- | --- | --- | --- |
+| `--bg` | `#FAF5FF` | `#14101F` | page ground |
+| `--surface` | `#FFFFFF` | `#1C1730` | sidebar, composer, fenced blocks |
+| `--surface-2` | `#EDE4FF` | `#251E3D` | the user's bubble, inline code, hover |
+| `--text` | `#1E1B4B` | `#EDE9FE` | everything read as prose |
+| `--muted` | `#475569` | `#A5A0C0` | the rail, meta, placeholders |
+| `--border` | `#DDD6FE` | `#2E2748` | separators **only** |
+| `--border-strong` | `#8B5CF6` | `#7E6FB8` | anything a pointer aims at |
+| `--primary` | `#7C3AED` | `#A78BFA` | the agent's mark, send, active thread |
+| `--accent` | `#0E7490` | `#22D3EE` | rail marks, the trace link |
+| `--danger` | `#B91C1C` | `#F87171` | a refusal, a violation, the dial when off |
 
-> O modelo nunca escreve o que o cliente ouve. O texto falado é aprovado
-> previamente; a digitação na tela é apenas um efeito visual.
+**Three of these are not the obvious value, and each is a measurement.**
 
-The stage rail is the opposite: every cell is a real SSE frame with a real
-measurement behind it. A skipped stage renders **struck through rather than hidden**,
-because which path the turn took is the information, and a hidden cell would let the
-`judge` step's absence pass for its success.
+`--accent` in light is cyan-700, not the cyan-600 that reads brighter: `#0891B2`
+measures **3.68:1** on the page ground and fails as text.
 
-One derivation is worth naming. `TurnResponse` carries no extraction, so during a
-live call the CAPTURA rows are derived from the `advance` and `judge` stage frames —
-the only truthful in-flight signal there is — and then overwritten wholesale from
-`record` once the call finishes, which is authoritative. The ficha never shows a
-value it inferred once the real one exists.
+`--danger` in light started at `#DC2626`, which measures 4.52:1 — passing, with
+no margin, on 11.5px violation text.
+
+`--border-strong` in dark started at `#6B5CA5`, which measures **3.05:1**.
+Passing, and by so little that any later change to the surface would break it
+silently.
+
+The two-border split is itself a contrast decision: `--border` is 1.39:1 in
+light, invisible as a control boundary and correct as a separator. Every value
+above was measured, both themes, 28 pairs.
+
+## Type
+
+Two families, two jobs. The three-family split of the previous design carried
+an argument — *serif means someone said this aloud* — that no longer has a
+referent.
+
+- **Inter**, 300–700. Every word.
+- **IBM Plex Mono**, 400–600, with `tabular-nums`. Every machine value:
+  milliseconds, tokens, cost, thread ids, violation fields. The tabular figures
+  are not aesthetic — a column of millisecond counts that reflows as its digits
+  change is a column nobody can scan.
+
+---
+
+## Honesty notes, carried into the code
+
+**The typewriter is cosmetic and says so.** The service sends the answer whole;
+there is no token stream to follow. `runtime/turns.py` already requests the
+`messages` channel from the graph specifically so that adding one later is a
+client change rather than a contract change. Until then the reveal is an
+animation, the animated copy is `aria-hidden`, and the full text sits in an
+`sr-only` span so a screen reader hears the answer once, complete.
+
+**A reopened conversation shows no rail.** The frames were live measurements and
+are not stored. An empty rail is honest; reconstructing one would be invention.
+
+**The greeting has no metrics.** No model ran, so there is no latency and no
+cost. Rendering `0 ms · US$ 0.0000` would be a measurement of something never
+measured — the same reason an unpriced model reports `—` rather than zero.
+
+**Nothing in the header is unsourced.** Every field is a value the service
+returned. An earlier version displayed a protocol version no endpoint served,
+which put a number on screen that nothing could contradict.
+
+---
+
+## Verified, not assumed
+
+Both themes at 375 / 768 / 1024 / 1440. Contrast measured on the rendered
+tokens rather than the intended ones. The full script driven in a real browser:
+an ASCII diagram scrolling inside its own block without moving the page, a
+prompt injection refused with `modelo` and `saída` struck through, a
+conversation reopened from the sidebar and continued with its memory intact.
+
+`prefers-reduced-motion` switches off every transition through the blanket rule,
+and the typewriter through `useReducedMotion` — CSS cannot reach a JavaScript
+timer, which is the one thing the media query alone would miss.

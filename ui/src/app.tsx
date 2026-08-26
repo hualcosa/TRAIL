@@ -1,369 +1,332 @@
 /**
- * The demo shell: one call at a time, from account picker to closed record.
+ * The whole application: one conversation, its history, and the pipeline
+ * behind every answer.
  *
- * All call state lives here and is passed down; there is no store and no
- * context, because there is exactly one call and its whole lifetime fits on one
- * screen. The only genuinely intricate part is `runTurn`, which consumes the
- * SSE stream and is documented where it sits.
+ * All state lives here and is passed down. There is no store and no context,
+ * because there are eleven values and one place that changes them, and a store
+ * would be indirection bought with nothing.
  *
- * Note what this component never does: it does not decide anything about the
- * customer. It renders the steps the state machine took, the verdicts the gate
- * returned and the words the customer said. Every judgement on this screen was
- * made by the backend and is reproduced, not re-derived.
+ * The turn loop is the only intricate part, and its shape is forced. A turn
+ * arrives as a stream of frames, so the accumulator has to live in local
+ * variables rather than in state: the loop spans many renders, and a closed-over
+ * `useState` value would be stale by the second frame.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ApiError, fetchDemoCases, markUnreachable, startCall, streamTurn } from "./api";
-import { CasePicker, caseKey } from "./components/CasePicker";
-import { Composer } from "./components/Composer";
-import { Ficha, fichaSummary } from "./components/Ficha";
-import { Header } from "./components/Header";
-import { StageRail } from "./components/StageRail";
-import { Transcript } from "./components/Transcript";
-import { useNarrowViewport } from "./hooks";
+import { useCallback, useEffect, useRef, useState } from "react";
+
 import {
-  EMPTY_FICHA,
-  EMPTY_RAIL,
+  ApiError,
+  deleteThread,
+  fetchThread,
+  fetchThreads,
+  startThread,
+  streamTurn,
+} from "./api";
+import { useNarrowViewport, usePersisted } from "./hooks";
+import {
+  EMPTY_ACCUMULATOR,
   accumulateStage,
-  applyRecord,
-  applyStageToFicha,
-  applyStageToRail,
-  applyUnreachedRecord,
-  terminalFromStage,
+  metricsFrom,
+  nextId,
   type Entry,
-  type FichaState,
-  type RailState,
   type TurnAccumulator,
 } from "./state";
-import type {
-  AccountProfile,
-  DemoCases,
-  ErrorEvent,
-  Step,
-  TerminalState,
-  TurnResponse,
-} from "./types";
+import type { StartThreadResponse, ThreadSummary, TurnEvent } from "./types";
 
-let sequence = 0;
-/** Entry ids only need to be unique and stable for React's reconciler. */
-function nextId(prefix: string): string {
-  sequence += 1;
-  return `${prefix}-${sequence}`;
-}
+import { Composer } from "./components/Composer";
+import { Header, NEXT_THEME } from "./components/Header";
+import { Sidebar } from "./components/Sidebar";
+import { Transcript } from "./components/Transcript";
 
 export function App() {
-  const [cases, setCases] = useState<DemoCases | null>(null);
-  const [casesError, setCasesError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string>("__default__");
-  const [starting, setStarting] = useState(false);
-
-  const [callId, setCallId] = useState<string | null>(null);
-  const [profile, setProfile] = useState<AccountProfile | null>(null);
+  const [thread, setThread] = useState<StartThreadResponse | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
-  const [ficha, setFicha] = useState<FichaState>(EMPTY_FICHA);
-  const [step, setStep] = useState<Step | null>(null);
-  const [terminal, setTerminal] = useState<TerminalState | null>(null);
-  const [rail, setRail] = useState<RailState | null>(null);
+  const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  const [durable, setDurable] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [fatal, setFatal] = useState<string | null>(null);
 
   const narrow = useNarrowViewport();
-  const [fichaOpen, setFichaOpen] = useState(false);
+  const [theme, setTheme] = usePersisted("trail.theme", "");
+  // Two pieces of state for one panel, and the split is the fix for a real
+  // failure. The persisted preference governs the *wide* layout, where the
+  // sidebar shares the width. Below the breakpoint it overlays the
+  // conversation, so it starts closed every time and is never remembered — a
+  // phone that restored "open" would greet its reader with a list covering the
+  // thing they came to read.
+  const [sidebarPref, setSidebarPref] = usePersisted("trail.sidebar", "1");
+  const [overlayOpen, setOverlayOpen] = useState(false);
+  const sidebarOpen = narrow ? overlayOpen : sidebarPref === "1";
 
+  const toggleSidebar = useCallback(() => {
+    if (narrow) setOverlayOpen((open) => !open);
+    else setSidebarPref(sidebarPref === "1" ? "0" : "1");
+  }, [narrow, sidebarPref, setSidebarPref]);
+
+  // The <html> attribute is what `light-dark()` reads. Removed rather than set
+  // to a sentinel for "system", so the CSS falls back to the media query.
   useEffect(() => {
-    let cancelled = false;
-    fetchDemoCases()
-      .then((payload) => {
-        if (cancelled) return;
-        setCases(payload);
-        setSelected(caseKey(payload.default));
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        setCasesError(error instanceof Error ? error.message : String(error));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    const root = document.documentElement;
+    if (theme === "light" || theme === "dark") root.dataset.theme = theme;
+    else delete root.dataset.theme;
+  }, [theme]);
 
-  const selectedProfile = useMemo<AccountProfile | null>(() => {
-    if (!cases) return null;
-    const all = [cases.default, ...cases.cases];
-    return (all.find((item) => caseKey(item) === selected) ?? cases.default)
-      .profile;
-  }, [cases, selected]);
-
-  const model = ficha.record?.model ?? null;
-
-  const reset = useCallback(() => {
-    setCallId(null);
-    setProfile(null);
-    setEntries([]);
-    setFicha(EMPTY_FICHA);
-    setStep(null);
-    setTerminal(null);
-    setRail(null);
-    setBusy(false);
-  }, []);
-
-  const onStart = useCallback(async () => {
-    if (!cases || !selectedProfile) return;
-    const chosen =
-      [cases.default, ...cases.cases].find(
-        (item) => caseKey(item) === selected,
-      ) ?? cases.default;
-    setStarting(true);
+  const refreshThreads = useCallback(async () => {
     try {
-      const started = await startCall(chosen.profile, chosen.case_id);
-      setCallId(started.call_id);
-      setProfile(chosen.profile);
-      setStep(started.step);
-      setTerminal(started.terminal_state);
-      setEntries([
-        {
-          kind: "agent",
-          id: nextId("agent"),
-          text: started.agent_utterance,
-          step: started.step,
-          transferred: false,
-          violations: [],
-          // The opening turn has no pipeline behind it — the agent speaks
-          // first, nothing was extracted — so it carries a trace link and no
-          // latency figures. Printing zeros there would claim a measurement
-          // that was never taken.
-          metrics: started.trace_url
-            ? { ms: null, tokens: null, costUsd: null, traceUrl: started.trace_url }
-            : null,
-          fresh: true,
-        },
-      ]);
-    } catch (error: unknown) {
-      const detail =
+      const list = await fetchThreads();
+      setThreads(list.threads);
+      setDurable(list.durable);
+    } catch {
+      // A failed list is not a failed conversation. The sidebar stays as it
+      // was rather than emptying, which would read as "your history is gone".
+    }
+  }, []);
+
+  const openThread = useCallback(async () => {
+    try {
+      const opened = await startThread();
+      setThread(opened);
+      setEntries(
+        opened.greeting
+          ? [
+              {
+                kind: "agent",
+                id: nextId(),
+                text: opened.greeting,
+                rail: [],
+                violations: [],
+                blocked: false,
+                // No metrics: the greeting is the example's own string and no
+                // model ran. Zeroes here would be a measurement of nothing.
+                metrics: {
+                  ms: null,
+                  tokensIn: null,
+                  tokensOut: null,
+                  costUsd: null,
+                  traceUrl: null,
+                },
+                fresh: false,
+              },
+            ]
+          : [],
+      );
+      setFatal(null);
+      void refreshThreads();
+    } catch (error) {
+      setFatal(
         error instanceof ApiError
           ? `${error.status} · ${error.message}`
-          : String(error);
-      setCasesError(detail);
-    } finally {
-      setStarting(false);
+          : "não consegui falar com o agente. a stack está de pé? `make up`",
+      );
     }
-  }, [cases, selected, selectedProfile]);
+  }, [refreshThreads]);
 
-  /**
-   * Run one customer turn and play the pipeline as it arrives.
-   *
-   * The customer's line is appended before the request goes out, because the
-   * customer said it — it is not contingent on the turn succeeding, and a
-   * transcript that drops it on a 502 loses the evidence for the retry.
-   *
-   * Everything the stream reports is accumulated in local variables rather than
-   * state: the loop can run for seconds across many frames, and reading a piece
-   * of React state inside it would read the value captured when the callback
-   * was created. State is written on every frame (so the rail and the ficha
-   * move live) and read exactly never.
-   *
-   * The stream always ends with a `trace` frame, including on failure, so the
-   * trace link is attached after the loop rather than at the point the `turn`
-   * or `error` frame lands.
-   */
-  const runTurn = useCallback(
-    async (utterance: string) => {
-      if (!callId || busy) return;
-      setEntries((prev) => [
-        ...prev,
-        { kind: "customer", id: nextId("customer"), text: utterance },
-      ]);
+  // Open one on first load, and only once: StrictMode double-invokes effects in
+  // development, and without the guard every reload creates two threads.
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    void openThread();
+  }, [openThread]);
+
+  const resume = useCallback(
+    async (threadId: string) => {
+      try {
+        const past = await fetchThread(threadId);
+        setThread((current) =>
+          current ? { ...current, thread_id: threadId } : current,
+        );
+        setEntries(
+          past.messages.map((message) =>
+            message.role === "user"
+              ? { kind: "user", id: nextId(), text: message.text }
+              : {
+                  kind: "agent",
+                  id: nextId(),
+                  text: message.text,
+                  // A reopened conversation has no rail. The frames were live
+                  // measurements and are not stored — showing an empty rail is
+                  // honest; reconstructing one would be invention.
+                  rail: [],
+                  violations: [],
+                  blocked: false,
+                  metrics: {
+                    ms: null,
+                    tokensIn: null,
+                    tokensOut: null,
+                    costUsd: null,
+                    traceUrl: null,
+                  },
+                  fresh: false,
+                },
+          ),
+        );
+        // Picking a conversation on a phone means you want to read it, not
+        // keep looking at the list that is covering it.
+        setOverlayOpen(false);
+      } catch {
+        setFatal("não consegui abrir essa conversa.");
+      }
+    },
+    [],
+  );
+
+  const forgetThread = useCallback(
+    async (threadId: string) => {
+      setThreads((current) => current.filter((t) => t.thread_id !== threadId));
+      try {
+        await deleteThread(threadId);
+      } finally {
+        void refreshThreads();
+      }
+    },
+    [refreshThreads],
+  );
+
+  const send = useCallback(
+    async (message: string) => {
+      if (!thread) return;
+      const threadId = thread.thread_id;
       setBusy(true);
-      setRail(EMPTY_RAIL);
+      setEntries((prev) => [...prev, { kind: "user", id: nextId(), text: message }]);
 
-      let acc: TurnAccumulator = {
-        tokens: 0,
-        costUsd: 0,
-        transferred: false,
-        violations: [],
-        startedAt: performance.now(),
-      };
-      let response: TurnResponse | null = null;
-      let failure: ErrorEvent | null = null;
+      // Local, not state: this loop spans many renders and a closed-over state
+      // value would be stale from the second frame onward.
+      let acc: TurnAccumulator = EMPTY_ACCUMULATOR;
+      let turn: TurnEvent | null = null;
       let traceUrl: string | null = null;
-      let stageTerminal: TerminalState | null = null;
+      let failure: { status: number; detail: string } | null = null;
 
       try {
-        for await (const frame of streamTurn(callId, utterance)) {
+        for await (const frame of streamTurn(threadId, message)) {
           if (frame.event === "stage") {
-            const event = frame.data;
-            acc = accumulateStage(acc, event);
-            stageTerminal = terminalFromStage(event) ?? stageTerminal;
-            setRail((prev) => applyStageToRail(prev ?? EMPTY_RAIL, event));
-            setFicha((prev) => applyStageToFicha(prev, event));
+            acc = accumulateStage(acc, frame.data);
+            // Re-rendered per frame so the rail fills in as the turn runs.
+            // That live fill is the demo; batching it to the end would make a
+            // stream indistinguishable from a slow request.
+            setEntries((prev) => withLiveRail(prev, acc));
           } else if (frame.event === "turn") {
-            response = frame.data;
+            turn = frame.data;
           } else if (frame.event === "error") {
             failure = frame.data;
           } else {
             traceUrl = frame.data.trace_url;
           }
         }
-      } catch (error: unknown) {
-        // The stream never opened, or it broke mid-flight. Either way the call
-        // stays open on the server and the same turn can be resubmitted.
+      } catch (error) {
         failure =
           error instanceof ApiError
             ? { status: error.status, detail: error.message }
-            : { status: 0, detail: String(error) };
+            : { status: 0, detail: "conexão interrompida" };
       }
 
-      const ms = Math.round(performance.now() - acc.startedAt);
-
-      if (response) {
-        const turn = response;
-        setStep(turn.step);
-        setTerminal(turn.terminal_state);
-        setEntries((prev) => [
-          ...prev,
+      setEntries((prev) => {
+        const withoutLive = prev.filter((entry) => entry.id !== LIVE_ID);
+        if (failure) {
+          return [
+            ...withoutLive,
+            {
+              kind: "error",
+              id: nextId(),
+              status: failure.status,
+              detail: failure.detail,
+              traceUrl,
+            },
+          ];
+        }
+        return [
+          ...withoutLive,
           {
             kind: "agent",
-            id: nextId("agent"),
-            text: turn.agent_utterance,
-            step: turn.step,
-            transferred: acc.transferred,
+            id: nextId(),
+            text: turn?.text ?? "",
+            rail: acc.rail,
             violations: acc.violations,
-            metrics: {
-              ms,
-              tokens: acc.tokens,
-              costUsd: acc.costUsd,
-              traceUrl: turn.trace_url ?? traceUrl,
-            },
+            blocked: acc.blocked,
+            metrics: metricsFrom(acc, turn, traceUrl),
             fresh: true,
           },
-        ]);
-        if (turn.record) setFicha(applyRecord(turn.record));
-      } else {
-        const problem = failure ?? {
-          status: 0,
-          detail: "O stream terminou sem resposta do turno.",
-        };
-        setEntries((prev) => [
-          ...prev,
-          {
-            kind: "error",
-            id: nextId("error"),
-            status: problem.status,
-            detail: problem.detail,
-            traceUrl,
-          },
-        ]);
-        // A failed turn leaves the call open on purpose — the state machine did
-        // not advance, so the same utterance can be sent again. The one
-        // exception is a terminal state the stage frames already reported
-        // before the failure, which is the machine having finished.
-        if (stageTerminal) setTerminal(stageTerminal);
-      }
-
-      setRail(null);
+        ];
+      });
       setBusy(false);
+      void refreshThreads();
     },
-    [busy, callId],
+    [thread, refreshThreads],
   );
 
-  const onUnreachable = useCallback(async () => {
-    if (!callId || busy) return;
-    setBusy(true);
-    try {
-      const record = await markUnreachable(callId, "sem atendimento");
-      setTerminal(record.terminal_state);
-      setFicha(applyUnreachedRecord(record));
-    } catch (error: unknown) {
-      const problem =
-        error instanceof ApiError
-          ? { status: error.status, detail: error.message }
-          : { status: 0, detail: String(error) };
-      setEntries((prev) => [
-        ...prev,
-        {
-          kind: "error",
-          id: nextId("error"),
-          status: problem.status,
-          detail: problem.detail,
-          traceUrl: null,
-        },
-      ]);
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, callId]);
-
-  const fichaPanel = (
-    <Ficha profile={profile ?? selectedProfile} ficha={ficha} />
-  );
+  const showSidebar = !narrow || sidebarOpen;
 
   return (
-    <div className="shell">
-      <Header
-        callId={callId}
-        model={model}
-        status={callId === null ? "idle" : terminal ? "closed" : "live"}
-      />
+    <div className={`shell${showSidebar ? " shell--with-sidebar" : ""}`}>
+      {showSidebar ? (
+        <div className="shell__sidebar" id="sidebar">
+          <Sidebar
+            threads={threads}
+            durable={durable}
+            activeId={thread?.thread_id ?? null}
+            onSelect={(id) => void resume(id)}
+            onNew={() => {
+              setOverlayOpen(false);
+              void openThread();
+            }}
+            onDelete={(id) => void forgetThread(id)}
+          />
+        </div>
+      ) : null}
 
-      <main className="layout">
-        <section className="call" aria-label="Chamada">
-          {callId ? (
-            <>
-              <p className="call__step">
-                <span className="eyebrow">passo</span>
-                <span aria-hidden="true" className="call__caret">
-                  ▸
-                </span>
-                <span className="mono">{step ?? "—"}</span>
-              </p>
-              <Transcript entries={entries} />
-              {rail ? <StageRail rail={rail} /> : null}
-              {narrow ? (
-                <div className="ficha-strip">
-                  <button
-                    type="button"
-                    className="ficha-strip__toggle"
-                    aria-expanded={fichaOpen}
-                    aria-controls="ficha-panel"
-                    onClick={() => setFichaOpen((open) => !open)}
-                  >
-                    <span className="eyebrow">Ficha da chamada</span>
-                    <span className="mono">{fichaSummary(ficha)}</span>
-                    <span aria-hidden="true">{fichaOpen ? "▲" : "▼"}</span>
-                  </button>
-                  {fichaOpen ? (
-                    <div id="ficha-panel" className="ficha ficha--inline">
-                      {fichaPanel}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-              <Composer
-                busy={busy}
-                finished={terminal}
-                onSend={runTurn}
-                onUnreachable={onUnreachable}
-                onRestart={reset}
-              />
-            </>
-          ) : (
-            <CasePicker
-              cases={cases}
-              selected={selected}
-              starting={starting}
-              error={casesError}
-              onSelect={setSelected}
-              onStart={onStart}
-            />
-          )}
-        </section>
+      <div className="shell__main">
+        <Header
+          agent={thread?.agent ?? null}
+          guardrails={thread?.guardrails ?? null}
+          threadId={thread?.thread_id ?? null}
+          theme={theme}
+          onTheme={() => setTheme(NEXT_THEME[theme] ?? "")}
+          onToggleSidebar={toggleSidebar}
+          showSidebarToggle={narrow}
+          sidebarOpen={sidebarOpen}
+        />
 
-        {!narrow ? (
-          <aside className="ficha" aria-label="Ficha da chamada">
-            <h2 className="ficha__title">Ficha da chamada</h2>
-            {fichaPanel}
-          </aside>
+        {fatal ? (
+          <p className="fatal" role="alert">
+            {fatal}
+          </p>
         ) : null}
-      </main>
+
+        <Transcript entries={entries} />
+        <Composer busy={busy} onSend={(message) => void send(message)} />
+      </div>
     </div>
   );
+}
+
+/** The id of the in-flight entry, replaced by the real one when the turn lands. */
+const LIVE_ID = "__live__";
+
+/**
+ * Show the rail of a turn that is still running.
+ *
+ * A placeholder entry rather than a separate component, so the rail appears
+ * exactly where the answer will — the wait is visibly the pipeline working in
+ * the answer's own place, rather than a spinner somewhere else.
+ */
+function withLiveRail(entries: Entry[], acc: TurnAccumulator): Entry[] {
+  const live: Entry = {
+    kind: "agent",
+    id: LIVE_ID,
+    text: "",
+    rail: acc.rail,
+    violations: [],
+    blocked: false,
+    metrics: {
+      ms: null,
+      tokensIn: null,
+      tokensOut: null,
+      costUsd: null,
+      traceUrl: null,
+    },
+    fresh: false,
+  };
+  const withoutLive = entries.filter((entry) => entry.id !== LIVE_ID);
+  return [...withoutLive, live];
 }

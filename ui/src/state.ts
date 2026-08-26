@@ -1,109 +1,67 @@
 /**
- * The UI's own state shapes, and the one piece of real logic in the frontend:
- * how the ficha fills itself in while a call is still running.
+ * The shapes the transcript is made of, and the reducers that fold a stream of
+ * stage frames into them.
  *
- * Worth reading, because it is the only place this client derives anything.
+ * No I/O here and no React. Everything is a pure function of the frames that
+ * arrived, which is what lets the interesting logic — cost accumulation, the
+ * rail, whether a turn was blocked — be reasoned about without a browser.
  *
- * `TurnResponse` carries no extraction — it is the agent's next approved
- * utterance, the step, and the record once the call is over. So during a live
- * call there is nothing on the turn payload that says whether identity was
- * confirmed or consent was given. The only truthful in-flight signal is the
- * pipeline itself: `advance` reports which step the machine moved *from* and
- * *to*, and a machine that left `verify_right_party` is a machine whose identity
- * compare passed. `judge` reports the terms verdict directly.
- *
- * That derivation is inference about the *state machine*, never about the
- * customer, and it is thrown away the moment the authoritative answer exists:
- * when the call finishes, `applyRecord` overwrites every capture row from
- * `CallRecord`. The alternative — leaving the ficha blank until the call ends —
- * would hide the thing the demo is for, and the alternative to *that* — asking
- * the model what it thinks was captured — is the classifier this whole system
- * refuses to build.
+ * The rail is the part that changed shape rather than merely names. It used to
+ * be a fixed record of six known stages. The contract now emits `tool:<name>`
+ * once per tool call and `model` once per tool round, so the count is unbounded
+ * and the names are the agent's to choose. It is a list in arrival order, and
+ * arrival order is pipeline order — the backend emits a switched-off gate's
+ * skip from the hook where that gate would have run, precisely so no client
+ * has to sort.
  */
 
-import type {
-  AdvanceDetail,
-  CallRecord,
-  ComplianceViolation,
-  Dispute,
-  ExtractDetail,
-  JudgeDetail,
-  PaymentCommitment,
-  StageEvent,
-  StageName,
-  Step,
-  TerminalState,
-} from "./types";
+import type { StageEvent, TurnEvent, Violation } from "./types";
 
-/** Tri-state as the ficha prints it. `—` is "not asked", not "no". */
-export type Tri = "sim" | "não" | "—";
-
-export interface CaptureRows {
-  identidade: Tri;
-  consentimento: Tri;
-  termos: Tri;
-  caminho: Tri;
-  canal: Tri;
-}
-
-export const EMPTY_CAPTURE: CaptureRows = {
-  identidade: "—",
-  consentimento: "—",
-  termos: "—",
-  caminho: "—",
-  canal: "—",
-};
-
-export interface FichaState {
-  capture: CaptureRows;
-  commitments: PaymentCommitment[];
-  disputes: Dispute[];
-  record: CallRecord | null;
-}
-
-export const EMPTY_FICHA: FichaState = {
-  capture: EMPTY_CAPTURE,
-  commitments: [],
-  disputes: [],
-  record: null,
-};
+// --------------------------------------------------------------------------
+// Transcript entries
+// --------------------------------------------------------------------------
 
 /**
- * What one completed turn cost, printed in the turn footer under the reply.
+ * What one turn cost, and how to reach its trace.
  *
- * Every field is nullable and the footer prints only the ones that are present.
- * The opening utterance is why: the agent speaks first, no extraction ran, and
- * there is nothing to measure — but there *is* a trace. Filling those fields
- * with zeros would put "0 ms · 0 tok · US$ 0,0000" on screen, which is not an
- * absent measurement, it is a claimed one, and it is wrong.
+ * Every field is nullable on purpose. The greeting has no latency because no
+ * model ran; a model with no published rate has an unknown cost. Rendering
+ * `0 ms` or `US$ 0.00` in those cases would be a measurement claim about
+ * something never measured — a confident zero is the most expensive kind of
+ * wrong.
  */
 export interface TurnMetrics {
   ms: number | null;
-  tokens: number | null;
+  tokensIn: number | null;
+  tokensOut: number | null;
   costUsd: number | null;
   traceUrl: string | null;
 }
+
+export const EMPTY_METRICS: TurnMetrics = {
+  ms: null,
+  tokensIn: null,
+  tokensOut: null,
+  costUsd: null,
+  traceUrl: null,
+};
 
 export type Entry =
   | {
       kind: "agent";
       id: string;
       text: string;
-      step: Step;
-      /** True when the compliance gate forced this turn into a transfer. */
-      transferred: boolean;
-      /**
-       * What the gate caught, verbatim from the `screen` frame. Rendered under
-       * the stamp because the audience for this demo is the person who has to
-       * sign off on the gate, and "it transferred" without the rule it fired on
-       * is not a reviewable statement.
-       */
-      violations: ComplianceViolation[];
-      metrics: TurnMetrics | null;
-      /** False on replay/rehydrate; the reveal only animates on arrival. */
+      /** Arrival-ordered, `start` frames already dropped. */
+      rail: StageEvent[];
+      /** Gathered from every `blocked` guard frame in the turn. */
+      violations: Violation[];
+      /** Whether any gate refused this turn. Drives the whole visual treatment. */
+      blocked: boolean;
+      metrics: TurnMetrics;
+      /** Freshly arrived, so the reveal animation runs once and only once. */
       fresh: boolean;
     }
-  | { kind: "customer"; id: string; text: string }
+  | { kind: "user"; id: string; text: string }
   | {
       kind: "error";
       id: string;
@@ -112,172 +70,111 @@ export type Entry =
       traceUrl: string | null;
     };
 
-/** Live state of the six-cell rail for the turn currently in flight. */
-export interface RailCell {
-  status: "pending" | "running" | "done" | "skipped";
-  ms: number | null;
-}
+// --------------------------------------------------------------------------
+// Folding a turn
+// --------------------------------------------------------------------------
 
-export type RailState = Record<StageName, RailCell>;
-
-export const EMPTY_RAIL: RailState = {
-  extract: { status: "pending", ms: null },
-  judge: { status: "pending", ms: null },
-  advance: { status: "pending", ms: null },
-  screen: { status: "pending", ms: null },
-  persist: { status: "pending", ms: null },
-  finalise: { status: "pending", ms: null },
-};
-
-export function applyStageToRail(rail: RailState, event: StageEvent): RailState {
-  const next: RailCell =
-    event.status === "start"
-      ? { status: "running", ms: null }
-      : event.status === "skip"
-        ? { status: "skipped", ms: event.ms }
-        : { status: "done", ms: event.ms };
-  return { ...rail, [event.stage]: next };
-}
-
-// ---------------------------------------------------------------------------
-// Ficha derivation
-// ---------------------------------------------------------------------------
-
-/**
- * Which capture row each step answers, once the machine has moved past it.
- *
- * Leaving a step is the evidence. `capture_commitment`, `state_balance` and
- * `post_outcome` answer no row: they are things the agent says, not things the
- * customer confirms, and inventing a row for them would be the ficha claiming
- * a fact nobody stated.
- */
-const STEP_TO_ROW: Partial<Record<Step, keyof CaptureRows>> = {
-  verify_right_party: "identidade",
-  disclose_and_consent: "consentimento",
-  confirm_terms: "termos",
-  offer_payment_path: "caminho",
-  confirm_contact: "canal",
-};
-
-export function applyStageToFicha(
-  ficha: FichaState,
-  event: StageEvent,
-): FichaState {
-  if (event.status !== "done" || event.detail === null) return ficha;
-
-  if (event.stage === "advance") {
-    const detail = event.detail as AdvanceDetail;
-    const row = STEP_TO_ROW[detail.from_step];
-    if (!row) return ficha;
-
-    // A call that ended as `not_right_party` did not fail to ask about
-    // identity — it asked and got the wrong person. That is a `não`, and it is
-    // the one terminal state that contradicts its own step rather than simply
-    // stopping short of it.
-    if (detail.terminal_state === "not_right_party") {
-      return { ...ficha, capture: { ...ficha.capture, identidade: "não" } };
-    }
-    // Any other terminal state stops the machine where it stands. The row for
-    // the step it stopped on stays `—`: the question was put and the answer
-    // never resolved, which is neither a yes nor a no.
-    if (detail.finished) return ficha;
-    if (detail.to_step === detail.from_step) return ficha;
-
-    return { ...ficha, capture: { ...ficha.capture, [row]: "sim" } };
-  }
-
-  if (event.stage === "judge") {
-    const detail = event.detail as JudgeDetail;
-    return {
-      ...ficha,
-      capture: {
-        ...ficha.capture,
-        termos: detail.terms_restated_correctly ? "sim" : "não",
-      },
-    };
-  }
-
-  return ficha;
-}
-
-function tri(value: boolean | null | undefined): Tri {
-  if (value === null || value === undefined) return "—";
-  return value ? "sim" : "não";
-}
-
-/**
- * Replace every derived value with the finished record's own.
- *
- * Called once, when `finished` turns true. Nothing derived survives this: the
- * record is what the specialist reviews and what the eval harness scores, so
- * the screen must agree with it exactly, including where it disagrees with
- * what the stage frames implied.
- */
-export function applyRecord(record: CallRecord): FichaState {
-  return {
-    capture: {
-      identidade: record.terminal_state === "not_right_party" ? "não" : "sim",
-      consentimento: tri(record.consent_given),
-      termos: tri(record.terms_confirmed),
-      caminho: tri(record.selected_path !== null),
-      canal: tri(record.contact_channel_confirmed),
-    },
-    commitments: record.commitments,
-    disputes: record.disputes,
-    record,
-  };
-}
-
-/**
- * A record that never reached anyone answers no capture question at all.
- *
- * `POST /calls/{id}/unreachable` produces a real record with a real terminal
- * state, and `applyRecord` would read its empty booleans as five confident
- * `não`s. A call nobody answered did not refuse consent.
- */
-export function applyUnreachedRecord(record: CallRecord): FichaState {
-  return { ...EMPTY_FICHA, record };
-}
-
+/** What a turn's frames add up to, accumulated as they arrive. */
 export interface TurnAccumulator {
-  tokens: number;
-  costUsd: number;
-  transferred: boolean;
-  violations: ComplianceViolation[];
-  startedAt: number;
+  rail: StageEvent[];
+  violations: Violation[];
+  blocked: boolean;
+  tokensIn: number;
+  tokensOut: number;
+  /** Null until a priced model call reports one. See `TurnMetrics`. */
+  costUsd: number | null;
+  sawUsage: boolean;
 }
 
+export const EMPTY_ACCUMULATOR: TurnAccumulator = {
+  rail: [],
+  violations: [],
+  blocked: false,
+  tokensIn: 0,
+  tokensOut: 0,
+  costUsd: null,
+  sawUsage: false,
+};
+
+/**
+ * Fold one stage frame into the accumulator.
+ *
+ * Keyed on `kind` rather than on `name`, which is what keeps this function
+ * agnostic: `model` is a model call whatever the agent calls it, and any
+ * `tool:*` is a tool without this file knowing the tool list.
+ *
+ * The null handling around `cost_usd` is not defensive padding. The backend
+ * reports `null` for a model it has no rate for, and `(costUsd ?? 0) + null`
+ * would silently produce a number — turning "unknown" into "free" at exactly
+ * the moment someone is reading the number to decide something.
+ */
 export function accumulateStage(
   acc: TurnAccumulator,
   event: StageEvent,
 ): TurnAccumulator {
-  if (event.status !== "done" || event.detail === null) return acc;
-  if (event.stage === "extract") {
-    const d = event.detail as ExtractDetail;
-    return {
-      ...acc,
-      tokens: acc.tokens + d.input_tokens + d.output_tokens,
-      costUsd: acc.costUsd + d.cost_usd,
-    };
+  if (event.status === "start") return acc;
+
+  const next: TurnAccumulator = { ...acc, rail: [...acc.rail, event] };
+  const detail = event.detail;
+
+  if (event.kind === "model" && event.status === "done" && detail) {
+    next.tokensIn += detail.input_tokens ?? 0;
+    next.tokensOut += detail.output_tokens ?? 0;
+    if (typeof detail.cost_usd === "number") {
+      next.costUsd = (next.costUsd ?? 0) + detail.cost_usd;
+    }
+    next.sawUsage = true;
   }
-  if (event.stage === "judge") {
-    const d = event.detail as JudgeDetail;
-    return {
-      ...acc,
-      tokens: acc.tokens + d.input_tokens + d.output_tokens,
-      costUsd: acc.costUsd + d.cost_usd,
-    };
+
+  if (event.status === "blocked") {
+    next.blocked = true;
+    if (detail?.violations?.length) {
+      next.violations = [...next.violations, ...detail.violations];
+    }
   }
-  if (event.stage === "screen") {
-    const d = event.detail as { passed: boolean; forced_transfer: boolean; violations: ComplianceViolation[] };
-    return { ...acc, transferred: d.forced_transfer, violations: d.violations };
-  }
-  return acc;
+
+  return next;
 }
 
-export function terminalFromStage(event: StageEvent): TerminalState | null {
-  if (event.stage !== "advance" || event.status !== "done" || !event.detail) {
-    return null;
-  }
-  return (event.detail as AdvanceDetail).terminal_state;
+/** The accumulator plus the turn's own latency and trace, ready to render. */
+export function metricsFrom(
+  acc: TurnAccumulator,
+  turn: TurnEvent | null,
+  traceUrl: string | null,
+): TurnMetrics {
+  return {
+    ms: turn?.ms ?? null,
+    tokensIn: acc.sawUsage ? acc.tokensIn : null,
+    tokensOut: acc.sawUsage ? acc.tokensOut : null,
+    costUsd: acc.costUsd,
+    traceUrl,
+  };
+}
+
+// --------------------------------------------------------------------------
+// Rendering helpers
+// --------------------------------------------------------------------------
+
+/**
+ * The order a rail is read in, when something has to sort it.
+ *
+ * Nothing does today — frames arrive in pipeline order. This exists for the
+ * transcript replayed from `GET /threads/{id}`, which has messages and no
+ * frames at all, so that a reopened conversation and a live one agree on what
+ * "no rail" looks like rather than one of them inventing one.
+ */
+export const KIND_ORDER: Record<string, number> = {
+  guard_in: 0,
+  model: 1,
+  tool: 2,
+  guard_out: 3,
+  io: 4,
+};
+
+let counter = 0;
+
+/** A stable React key. Monotonic, so a re-render never reuses one. */
+export function nextId(): string {
+  counter += 1;
+  return `e${counter}`;
 }

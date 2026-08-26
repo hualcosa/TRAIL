@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useRef } from "react";
-import { Utterance } from "./Utterance";
+import { Message } from "./Message";
 import type { Entry } from "../state";
 
 const TAIL_TOLERANCE_PX = 80;
@@ -45,10 +45,10 @@ export function Transcript({ entries }: { entries: Entry[] }) {
         role="log"
         aria-live="polite"
         aria-relevant="additions"
-        aria-label="Transcrição da chamada"
+        aria-label="Transcrição da conversa"
       >
         {entries.map((entry) => (
-          <Utterance key={entry.id} entry={entry} />
+          <Message key={entry.id} entry={entry} />
         ))}
       </div>
     </div>
