@@ -30,6 +30,7 @@ operator believes it is off.
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from collections.abc import Callable, Sequence
@@ -41,6 +42,7 @@ from langchain.messages import AIMessage
 from langgraph.runtime import Runtime
 
 from trail.runtime.events import StageEvent, emit, ms_since
+from trail.telemetry import span
 
 # --------------------------------------------------------------------------
 # Verdicts
@@ -186,6 +188,49 @@ def _refuse(by: str, text: str) -> dict[str, Any]:
     }
 
 
+#: How much screened text reaches a span. A guard reads whole conversations;
+#: a trace only has to show enough to recognise what was screened.
+_SPAN_CHARS = 2_000
+
+
+def _guard_span(name: str, text: str) -> Any:
+    """A span for one gate, typed so Langfuse renders it as a gate.
+
+    ``GUARDRAIL`` is one of Langfuse's own observation kinds, which is why the
+    gates in this project appear in a trace as gates rather than as anonymous
+    spans between two model calls — and why a blocked turn is legible in the
+    tree without reading any attribute.
+    """
+    return span(
+        name,
+        **{
+            "trail.observation_type": "guardrail",
+            "trail.input": text[:_SPAN_CHARS],
+        },
+    )
+
+
+def _record(active: Any, verdict: GuardVerdict) -> None:
+    """Put the verdict on the span, as a level rather than only as a payload.
+
+    A blocked turn is a WARNING. Recorded as a plain attribute it is a
+    successful span with an unusual field, which is indistinguishable at a
+    glance from every other successful span — and a guardrail nobody can see
+    fire is the failure this whole scaffold argues against.
+    """
+    if verdict.passed:
+        active.set_attribute("trail.output", "passed")
+        return
+    active.set_attribute("trail.level", "WARNING")
+    active.set_attribute(
+        "trail.status_message",
+        "; ".join(f"{v.check}: {v.rule}" for v in verdict.violations)[:200],
+    )
+    active.set_attribute(
+        "trail.output", json.dumps(verdict.as_detail(), ensure_ascii=False)
+    )
+
+
 class InputGuard(AgentMiddleware):
     """Screens the incoming message before the model is called at all.
 
@@ -209,7 +254,10 @@ class InputGuard(AgentMiddleware):
         self, state: AgentState, runtime: Runtime
     ) -> dict[str, Any] | None:
         started = time.perf_counter()
-        verdict = self.check(_last_text(state))
+        text = _last_text(state)
+        with _guard_span("trail.guard.in", text) as active:
+            verdict = self.check(text)
+            _record(active, verdict)
         if verdict.passed:
             emit(
                 StageEvent(
@@ -275,7 +323,10 @@ class OutputGuard(AgentMiddleware):
             )
             return None
         started = time.perf_counter()
-        verdict = self.check(_last_text(state))
+        text = _last_text(state)
+        with _guard_span("trail.guard.out", text) as active:
+            verdict = self.check(text)
+            _record(active, verdict)
         if verdict.passed:
             emit(
                 StageEvent(

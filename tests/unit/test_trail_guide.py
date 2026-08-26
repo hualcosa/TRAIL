@@ -47,9 +47,37 @@ def test_a_query_of_only_short_words_is_rejected() -> None:
     assert "vazia" in search_docs("a de o")
 
 
-def test_every_word_must_appear() -> None:
-    """AND, not OR: an OR search returns the whole corpus for a two-word query."""
-    assert "Nada encontrado" in search_docs("Traced zzzznaoexistezzzz")
+def test_a_partial_match_comes_back_labelled_as_partial() -> None:
+    """A near miss is returned, and says that it is one.
+
+    Strict AND is worse than it looks: one wrong word returns nothing, and
+    nothing is indistinguishable from "this repository does not document that"
+    — which the agent is instructed to say out loud. Returning the closest
+    passages is only safe because the result says which kind of answer it is.
+    """
+    result = search_docs("Traced zzzznaoexistezzzz")
+    assert "mais próximos" in result
+    assert "README.md:" in result
+
+
+def test_a_full_match_is_not_labelled_as_partial() -> None:
+    assert "mais próximos" not in search_docs("Traced Runtime")
+
+
+def test_a_query_matching_nothing_at_all_still_says_so() -> None:
+    """Ranking must not turn 'no match' into 'here is something anyway'."""
+    assert "Nada encontrado" in search_docs("zzzznaoexistezzzz qqqjamaisqqq")
+
+
+def test_a_sentence_wrapped_across_lines_is_found() -> None:
+    """The reason this searches paragraphs rather than lines.
+
+    Markdown wraps a sentence over several lines, so two words of one sentence
+    routinely sit on different lines — and a line-based search reports that the
+    sentence is not there.
+    """
+    result = search_docs("pipeline rail machinery")
+    assert "mais próximos" not in result, "these three words share one sentence"
 
 
 def test_stack_status_lists_the_services_that_actually_run() -> None:

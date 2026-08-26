@@ -59,8 +59,9 @@ ROOT = _find_root()
 #: convenience.
 DOCS: tuple[str, ...] = ("README.md",)
 
-_MAX_HITS = 8
-_CONTEXT_LINES = 2
+#: How many passages come back. Enough that a second-choice match is visible,
+#: few enough that the model is not handed the whole document to re-read.
+_MAX_HITS = 6
 
 
 def _readable(relative: str) -> str:
@@ -71,43 +72,79 @@ def _readable(relative: str) -> str:
         return ""
 
 
+def _paragraphs(text: str) -> list[tuple[int, str]]:
+    """``(line number, paragraph)`` for each blank-line-separated block.
+
+    Paragraphs and not lines, and this is the whole quality of the tool. A
+    sentence in markdown is wrapped across three lines, so a line-based AND
+    search for two words that belong to one sentence finds nothing — and
+    "nothing" is a claim the agent then repeats as "not documented". Searching
+    the block a human would read is searching the unit the meaning lives in.
+    """
+    blocks: list[tuple[int, str]] = []
+    start = 1
+    buffer: list[str] = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        if line.strip():
+            if not buffer:
+                start = number
+            buffer.append(line)
+            continue
+        if buffer:
+            blocks.append((start, "\n".join(buffer)))
+            buffer = []
+    if buffer:
+        blocks.append((start, "\n".join(buffer)))
+    return blocks
+
+
 def search_docs(query: str) -> str:
     """Search this repository's documentation and return matching passages.
 
     Args:
-        query: Words to look for. Case-insensitive; every word must appear in
-            the passage.
+        query: Words to look for. Case-insensitive. Passages containing all of
+            them come first; if none does, the best partial matches are
+            returned rather than nothing.
 
     Returns:
-        Matching passages with their file and line number, or a sentence saying
-        nothing matched.
+        Matching passages with their file and starting line, or a sentence
+        saying nothing matched.
     """
-    words = [w for w in re.split(r"\s+", query.strip().lower()) if len(w) > 2]
+    words = [w for w in re.split(r"\W+", query.strip().lower()) if len(w) > 2]
     if not words:
         return "Consulta vazia. Informe ao menos uma palavra com 3 letras ou mais."
 
-    hits: list[str] = []
+    # Ranked rather than filtered. An AND search that misses by one word
+    # returns nothing, and nothing is indistinguishable from "this repository
+    # does not document that" — which the agent is instructed to say out loud.
+    # Scoring lets a near-miss come back as a near-miss.
+    scored: list[tuple[int, str]] = []
     for relative in DOCS:
-        lines = _readable(relative).splitlines()
-        for number, line in enumerate(lines, start=1):
-            haystack = line.lower()
-            if not all(word in haystack for word in words):
-                continue
-            low = max(number - 1 - _CONTEXT_LINES, 0)
-            high = min(number + _CONTEXT_LINES, len(lines))
-            passage = "\n".join(lines[low:high]).strip()
-            hits.append(f"{relative}:{number}\n{passage}")
-            if len(hits) >= _MAX_HITS:
-                break
-        if len(hits) >= _MAX_HITS:
-            break
+        for line_number, block in _paragraphs(_readable(relative)):
+            haystack = block.lower()
+            score = sum(1 for word in words if word in haystack)
+            if score:
+                scored.append((score, f"{relative}:{line_number}\n{block.strip()}"))
 
-    if not hits:
+    if not scored:
         return (
             f"Nada encontrado para {query!r} em: {', '.join(DOCS)}. "
             "Não há resposta documentada para essa pergunta."
         )
-    return "\n\n---\n\n".join(hits)
+
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    best = scored[0][0]
+    hits = [text for score, text in scored[:_MAX_HITS]]
+    prefix = ""
+    if best < len(words):
+        # Said in the result rather than left to be inferred: the agent has to
+        # be able to tell "here is the answer" from "here is the closest thing
+        # I found", and only the tool knows which one it is handing over.
+        prefix = (
+            f"(nenhum trecho contém todos os termos de {query!r}; "
+            f"estes são os mais próximos)\n\n"
+        )
+    return prefix + "\n\n---\n\n".join(hits)
 
 
 def stack_status() -> str:

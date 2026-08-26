@@ -44,6 +44,24 @@ TRACE = "trace"
 Frame = tuple[str, Any]
 
 
+#: How much of the question becomes the trace's title. Long enough to tell two
+#: turns apart in a list, short enough to stay on one row.
+_TITLE_CHARS = 70
+
+
+def _title(message: str) -> str:
+    """A trace title, from the question that was asked.
+
+    The alternative is what Langfuse falls back to — the HTTP route — which is
+    identical for every turn this service has ever served and therefore
+    identifies none of them.
+    """
+    single_line = " ".join(message.split())
+    if len(single_line) <= _TITLE_CHARS:
+        return single_line
+    return single_line[:_TITLE_CHARS] + "…"
+
+
 def _final_text(messages: list[Any]) -> str:
     """The last assistant message's text, or empty if there is none."""
     for message in reversed(messages):
@@ -82,7 +100,32 @@ async def run_turn(
     trace_id: str | None = None
     final: list[Any] = []
 
-    with span("trail.turn", **{"trail.thread_id": thread_id}):
+    # Five of these attributes exist purely so a trace is readable, and they
+    # are the difference between a wall of spans and something a person can
+    # scan.
+    #
+    # `as_root` does not reparent anything — the ASGI request span is still the
+    # tree's root, which is honest, because it is. What it does is elect *this*
+    # span as the one whose trace-level attributes win. Without it the trace
+    # takes its name from the HTTP route and every trace reads
+    # `POST /threads/{thread_id}/turns/stream`, which is true of all of them
+    # and therefore identifies none of them.
+    #
+    # `session_id` is the thread, which collects a whole conversation into one
+    # view instead of leaving its turns as unrelated traces. `trace_name` and
+    # `trace_input` put the question on the row itself, findable from a list.
+    with span(
+        "trail.turn",
+        **{
+            "trail.thread_id": thread_id,
+            "trail.as_root": True,
+            "trail.observation_type": "agent",
+            "trail.session_id": thread_id,
+            "trail.trace_name": _title(message),
+            "trail.trace_input": message,
+            "trail.input": message,
+        },
+    ) as active:
         trace_id = current_trace_id()
         try:
             async for mode, chunk in agent.astream(
@@ -100,6 +143,13 @@ async def run_turn(
             # Caught, not swallowed: it leaves as an `error` frame so the
             # streaming endpoint can report it in a body that has already begun.
             failure = exc
+            active.set_attribute("trail.level", "ERROR")
+            active.set_attribute("trail.status_message", str(exc)[:200])
+        # Set inside the span: an attribute added after the context manager
+        # exits lands on a span that has already been handed to the exporter.
+        answer = _final_text(final)
+        active.set_attribute("trail.output", answer)
+        active.set_attribute("trail.trace_output", answer)
 
     # After the span closes, never inside it: an unended span cannot be
     # exported, so flushing early ships an incomplete trace or none at all.
@@ -108,11 +158,7 @@ async def run_turn(
     if failure is None:
         yield (
             TURN,
-            {
-                "thread_id": thread_id,
-                "text": _final_text(final),
-                "ms": ms_since(started),
-            },
+            {"thread_id": thread_id, "text": answer, "ms": ms_since(started)},
         )
     else:
         yield ERROR, failure

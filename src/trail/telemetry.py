@@ -116,8 +116,8 @@ _initialised = False
 #: Langfuse's promotion rule is 'any span carrying a model attribute is a
 #: generation'. The LLM span already carries everything needed under this
 #: repo's own ``trail.*`` namespace; this maps those keys onto the GenAI
-#: semantic convention on the way out, so the instrumentation in
-#: ``agent/llm.py`` stays vendor-neutral and unedited.
+#: semantic convention on the way out, so the instrumentation stays
+#: vendor-neutral and unedited.
 _GENAI_ALIASES = {
     "trail.model": "gen_ai.request.model",
     "trail.input_tokens": "gen_ai.usage.input_tokens",
@@ -125,14 +125,61 @@ _GENAI_ALIASES = {
     "trail.cost_usd": "gen_ai.usage.cost",
 }
 
+#: What turns a wall of spans into something a person can read, and the reason
+#: it lives here rather than at the call sites: every name on the right is
+#: Langfuse's, every name on the left is ours. Moving to another backend is a
+#: new table in this file, not an edit to the middleware.
+#:
+#: * ``observation.type`` — one of Langfuse's own kinds, **lowercase**:
+#:   ``span``, ``generation``, ``event``, ``embedding``, ``agent``, ``tool``,
+#:   ``chain``, ``retriever``, ``guardrail``, ``evaluator``. The ingestion
+#:   mapper looks the value up in a lowercase table and silently falls back
+#:   to ``SPAN`` on a miss, so an uppercase value is not an error — it is a
+#:   correctly ingested span with the wrong kind. ``guardrail`` being one of
+#:   them is why this project's gates render as gates.
+#: * ``observation.input`` / ``.output`` — what went in and what came out.
+#:   Without them the trace shows timings and nothing to interpret, which is
+#:   the difference between "it took 940ms" and "it took 940ms answering this".
+#: * ``session.id`` — groups every turn of one thread into a conversation.
+#: * ``internal.as_root`` — promotes a span to the trace root. Without it the
+#:   root is the ASGI request and every trace is titled with the HTTP route.
+#: * ``level`` / ``status_message`` — a blocked turn is a warning, not a
+#:   success with an odd payload.
+_LANGFUSE_ALIASES = {
+    "trail.observation_type": "langfuse.observation.type",
+    "trail.input": "langfuse.observation.input",
+    "trail.output": "langfuse.observation.output",
+    "trail.level": "langfuse.observation.level",
+    "trail.status_message": "langfuse.observation.status_message",
+    "trail.session_id": "langfuse.session.id",
+    "trail.trace_name": "langfuse.trace.name",
+    "trail.trace_input": "langfuse.trace.input",
+    "trail.trace_output": "langfuse.trace.output",
+    "trail.as_root": "langfuse.internal.as_root",
+}
+
 
 def _with_genai_aliases(span_: ReadableSpan) -> ReadableSpan:
     attributes = span_.attributes or {}
-    if "trail.model" not in attributes:
-        return span_
     aliased = {
-        new: attributes[old] for old, new in _GENAI_ALIASES.items() if old in attributes
+        new: attributes[old]
+        for old, new in _LANGFUSE_ALIASES.items()
+        if old in attributes
     }
+    # The GenAI block is gated on `trail.model` because those four keys only
+    # mean anything together: a span with usage counts and no model is not a
+    # generation, and promoting it to one would put a cost on something that
+    # never called a model.
+    if "trail.model" in attributes:
+        aliased.update(
+            {
+                new: attributes[old]
+                for old, new in _GENAI_ALIASES.items()
+                if old in attributes
+            }
+        )
+    if not aliased:
+        return span_
     return ReadableSpan(
         name=span_.name,
         context=span_.get_span_context(),
@@ -150,11 +197,12 @@ def _with_genai_aliases(span_: ReadableSpan) -> ReadableSpan:
 
 
 class _GenAIExporter(SpanExporter):
-    """Wraps the real exporter, aliasing ``trail.*`` LLM attributes on the way out.
+    """Wraps the real exporter, aliasing ``trail.*`` attributes on the way out.
 
-    See :data:`_GENAI_ALIASES`. This is where the vendor-specific typing rule
-    lives, rather than in the instrumented code, because the instrumented code
-    (``agent/llm.py``) is out of scope for this change and should stay that way.
+    See :data:`_GENAI_ALIASES` and :data:`_LANGFUSE_ALIASES`. Every
+    vendor-specific attribute name in this repository is in those two tables
+    and nowhere else, so the middleware that produces the spans names only
+    things this project owns. Swapping backends is a new table here.
     """
 
     def __init__(self, inner: SpanExporter) -> None:
@@ -236,14 +284,43 @@ def _instrument_libraries(app: FastAPI | None) -> None:
     instrumentation records nothing, and doing it unconditionally keeps the two
     paths behaving identically apart from whether spans are recorded.
 
-    httpx instrumentation is what makes the evals service's calls to the agent
-    appear as one trace spanning both services rather than two unrelated ones —
-    which is the whole reason the harness drives the agent over HTTP.
+    httpx instrumentation is what makes one client's calls to the agent appear
+    as a single trace spanning both processes rather than two unrelated ones.
+
+    Two exclusions, and between them they are the difference between a readable
+    trace list and a wall.
+
+    ``exclude_spans`` drops the per-chunk ASGI spans. ASGI emits one
+    ``http send`` span per response chunk and the streaming endpoint sends one
+    chunk per stage frame, so a turn that did six interesting things arrives as
+    six useful spans buried under a dozen identical
+    ``POST …/turns/stream http send`` rows carrying nothing a reader wants.
+
+    ``excluded_urls`` drops two routes entirely.
+
+    ``healthz`` because the compose healthcheck calls it every ten seconds for
+    as long as the stack is up: leave it in and the overwhelming majority of
+    every trace list is a liveness probe, and finding a conversation means
+    filtering past hundreds of them.
+
+    The turn route because otherwise **two spans claim to be the trace root** —
+    the ASGI request, which has no parent, and ``trail.turn``, which asks to be
+    one. Both create a trace record, and the one that wins decides whether the
+    trace is called "quais serviços sobem?" or
+    ``POST /threads/{thread_id}/turns/stream``. The second is true of every
+    turn this service has ever served and therefore identifies none of them.
+    What is lost is a span holding the route, the status code and a latency
+    that ``trail.turn`` already measures more precisely.
     """
+    excluded = "healthz,threads/[^/]+/turns"
     if app is not None:
-        FastAPIInstrumentor.instrument_app(app)
+        FastAPIInstrumentor.instrument_app(
+            app, exclude_spans=["send", "receive"], excluded_urls=excluded
+        )
     else:
-        FastAPIInstrumentor().instrument()
+        FastAPIInstrumentor().instrument(
+            exclude_spans=["send", "receive"], excluded_urls=excluded
+        )
     HTTPXClientInstrumentor().instrument()
 
 

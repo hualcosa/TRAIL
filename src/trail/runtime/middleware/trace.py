@@ -28,6 +28,7 @@ opened. ``after_model`` sees the result and not the request.
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -44,6 +45,63 @@ from trail import costs
 from trail.runtime.events import StageEvent, emit, ms_since
 from trail.runtime.middleware.guards import omitted_by
 from trail.telemetry import span
+
+#: How much of a payload reaches a span. Generous, because the point of
+#: recording input and output is being able to read them, and stingy enough
+#: that one runaway tool result does not become the trace.
+_PAYLOAD_CHARS = 8_000
+
+
+def as_payload(value: Any) -> str:
+    """``value`` as a string a person can read in a trace viewer.
+
+    JSON when it is structured, so the viewer can pretty-print and fold it;
+    plain text when it already is text, because wrapping a paragraph in quotes
+    and escapes makes it harder to read, not easier.
+    """
+    if not isinstance(value, str):
+        try:
+            value = json.dumps(value, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            value = str(value)
+    if len(value) > _PAYLOAD_CHARS:
+        return value[:_PAYLOAD_CHARS] + f"… (+{len(value) - _PAYLOAD_CHARS} chars)"
+    return value
+
+
+def _readable_messages(messages: Any) -> list[dict[str, Any]]:
+    """The conversation as role/content pairs, dropping the framework's wrapping.
+
+    A trace viewer showing repr'd LangChain objects is showing the library, not
+    the conversation. Tool calls are kept because "the model asked for
+    search_docs with this query" is usually the thing you opened the trace to
+    find out.
+    """
+    readable: list[dict[str, Any]] = []
+    for message in messages or []:
+        entry: dict[str, Any] = {
+            "role": getattr(message, "type", "?"),
+            "content": getattr(message, "content", ""),
+        }
+        if tool_calls := getattr(message, "tool_calls", None):
+            entry["tool_calls"] = [
+                {"name": c.get("name"), "args": c.get("args")} for c in tool_calls
+            ]
+        readable.append(entry)
+    return readable
+
+
+def _tool_output(result: Any) -> Any:
+    """What the tool returned, unwrapped from whatever the framework wrapped it in.
+
+    A tool result arrives as a message, or a list of them, or the bare value —
+    and a trace that showed the wrapper would be showing the framework rather
+    than the answer the model was given.
+    """
+    if isinstance(result, list):
+        return [_tool_output(item) for item in result]
+    content = getattr(result, "content", None)
+    return result if content is None else content
 
 
 def _model_name(request: ModelRequest) -> str:
@@ -103,7 +161,16 @@ class TraceMiddleware(AgentMiddleware):
         handler: Any,
     ) -> ModelResponse:
         model = _model_name(request)
-        attributes: dict[str, Any] = {"trail.model": model}
+        attributes: dict[str, Any] = {
+            "trail.model": model,
+            "trail.observation_type": "generation",
+            # The prompt, as a conversation rather than as repr'd objects. This
+            # is the single most useful thing in the trace and the easiest to
+            # leave out, because nothing looks broken without it — the span has
+            # a latency, a cost and a token count, and no way to tell what any
+            # of them were spent on.
+            "trail.input": as_payload(_readable_messages(request.messages)),
+        }
         if self.thread_id:
             attributes["trail.thread_id"] = self.thread_id
         if self.prompt_version:
@@ -144,6 +211,10 @@ class TraceMiddleware(AgentMiddleware):
                 else costs.Usage()
             )
 
+            if messages:
+                active.set_attribute(
+                    "trail.output", as_payload(_readable_messages(messages[-1:]))
+                )
             active.set_attribute("trail.input_tokens", usage.input_tokens)
             active.set_attribute("trail.output_tokens", usage.output_tokens)
             active.set_attribute(
@@ -172,27 +243,46 @@ class TraceMiddleware(AgentMiddleware):
         request: ToolCallRequest,
         handler: Any,
     ) -> Any:
+        """Measure one tool call, and record what it was asked and what it said.
+
+        A tool call is its own observation kind in Langfuse, so it renders as a
+        tool rather than as an unlabelled span between two model calls. The
+        arguments are what tell a reader *why* the model reached for it, which
+        is usually the question that opened the trace.
+        """
         tool = request.tool_call.get("name", "tool")
         emit(StageEvent(name=f"tool:{tool}", kind="tool", label=tool, status="start"))
         started = time.perf_counter()
-        try:
-            result = await handler(request)
-        except Exception as exc:
-            # A tool that raised still ran, and how long it ran before failing
-            # is the number someone debugging actually wants. Reporting the
-            # failure as `blocked` rather than swallowing it keeps the rail
-            # honest; the exception continues to propagate untouched.
-            emit(
-                StageEvent(
-                    name=f"tool:{tool}",
-                    kind="tool",
-                    label=tool,
-                    status="blocked",
-                    ms=ms_since(started),
-                    detail={"error": type(exc).__name__},
+
+        with span(
+            f"trail.tool.{tool}",
+            **{
+                "trail.observation_type": "tool",
+                "trail.input": as_payload(request.tool_call.get("args", {})),
+            },
+        ) as active:
+            try:
+                result = await handler(request)
+            except Exception as exc:
+                # A tool that raised still ran, and how long it ran before
+                # failing is the number someone debugging actually wants.
+                # Reporting it rather than swallowing it keeps the rail honest;
+                # the exception continues to propagate untouched.
+                active.set_attribute("trail.level", "ERROR")
+                active.set_attribute("trail.status_message", str(exc)[:200])
+                emit(
+                    StageEvent(
+                        name=f"tool:{tool}",
+                        kind="tool",
+                        label=tool,
+                        status="blocked",
+                        ms=ms_since(started),
+                        detail={"error": type(exc).__name__},
+                    )
                 )
-            )
-            raise
+                raise
+            active.set_attribute("trail.output", as_payload(_tool_output(result)))
+
         emit(
             StageEvent(
                 name=f"tool:{tool}",
