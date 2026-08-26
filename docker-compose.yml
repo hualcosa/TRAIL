@@ -215,8 +215,11 @@ services:
         condition: service_healthy
     healthcheck:
       # busybox wget ships in nginx:alpine; there is no curl and adding one
-      # would mean an apk layer to run a single GET.
-      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost/"]
+      # would mean an apk layer to run a single GET. 127.0.0.1, not localhost:
+      # our default.conf only `listen 80` (v4), and the image's
+      # 10-listen-on-ipv6-by-default.sh skips a customised conf, so busybox
+      # wget resolving localhost to ::1 gets ECONNREFUSED.
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1/"]
       interval: 10s
       timeout: 5s
       retries: 6

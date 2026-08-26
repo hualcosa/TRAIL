@@ -42,3 +42,6 @@ htmlcov/
 .idea/
 *.swp
 .DS_Store
+
+# Agent tooling — vendored skill packs, machine-local.
+.claude/
