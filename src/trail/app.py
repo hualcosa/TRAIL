@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request, status
@@ -38,6 +39,13 @@ from trail.runtime.agent import build_agent
 from trail.runtime.checkpointers import open_persistence
 from trail.runtime.events import SSE_HEADERS, error_json, sse
 from trail.runtime.registry import load_spec
+from trail.runtime.threads import (
+    ThreadSummary,
+    forget,
+    list_threads,
+    open_thread,
+    record_turn,
+)
 from trail.runtime.turns import ERROR, TURN, run_turn
 from trail.telemetry import configure_logging, setup_telemetry
 
@@ -66,6 +74,44 @@ class TurnRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     message: str = Field(min_length=1)
+
+
+class ThreadListResponse(BaseModel):
+    """The conversation list, and whether it will still be here tomorrow.
+
+    ``durable`` is not decoration. With ``TRAIL_CHECKPOINTER=memory`` this list
+    is empty after every restart, and a client that cannot tell that apart from
+    "you have had no conversations" renders a bug where there is a setting.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    threads: list[dict] = Field(default_factory=list)
+    durable: bool
+
+
+class Message(BaseModel):
+    """One turn of a conversation, as a reader sees it.
+
+    Only ``user`` and ``agent``. Tool results and the empty assistant turns
+    that carry tool calls are machinery, and the machinery already has the
+    pipeline rail — putting it in the transcript twice would be showing the
+    framework rather than the conversation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["user", "agent"]
+    text: str
+
+
+class ThreadResponse(BaseModel):
+    """A conversation, reopened."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    thread_id: str
+    messages: list[Message] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------
@@ -134,6 +180,32 @@ def _settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
+def _store(request: Request):
+    """The cross-thread store, or ``None`` when the runtime has no persistence."""
+    persistence = getattr(request.app.state, "persistence", None)
+    return getattr(persistence, "store", None)
+
+
+def _readable_messages(messages: list) -> list[Message]:
+    """A stored conversation as a transcript, dropping the machinery.
+
+    ``type`` is one of ``human``, ``ai`` or ``tool``; an ``ai`` message with no
+    content is a turn that only asked for a tool. Verified against a live
+    thread rather than assumed.
+    """
+    out: list[Message] = []
+    for message in messages:
+        kind = getattr(message, "type", "")
+        content = getattr(message, "content", "")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        if kind == "human":
+            out.append(Message(role="user", text=content))
+        elif kind == "ai":
+            out.append(Message(role="agent", text=content))
+    return out
+
+
 # --------------------------------------------------------------------------
 # Endpoints
 # --------------------------------------------------------------------------
@@ -153,8 +225,13 @@ async def start_thread(request: Request) -> StartThreadResponse:
     """
     settings = _settings(request)
     spec = request.app.state.spec
+    thread_id = str(uuid4())
+    # Indexed on creation, not on first use. A thread that was opened and never
+    # answered is worth seeing as exactly that — indexing only what succeeded
+    # would hide the case where every turn is failing.
+    await open_thread(_store(request), thread_id)
     return StartThreadResponse(
-        thread_id=str(uuid4()),
+        thread_id=thread_id,
         agent=spec.name,
         greeting=spec.greeting,
         guardrails=settings.guardrails,
@@ -173,11 +250,17 @@ async def stream_turn(thread_id: str, body: TurnRequest, request: Request):
     settings = _settings(request)
     agent = request.app.state.agent
 
+    store = _store(request)
+
     async def frames() -> AsyncIterator[str]:
         async for name, payload in run_turn(
             agent, thread_id=thread_id, message=body.message, settings=settings
         ):
             yield sse(name, error_json(payload) if name == ERROR else payload)
+        # After the frames, so a client is never waiting on a write it cannot
+        # see. A failed turn is still recorded: the sidebar should show the
+        # conversation you were having when it broke.
+        await record_turn(store, thread_id, body.message)
 
     return StreamingResponse(
         frames(), media_type="text/event-stream", headers=SSE_HEADERS
@@ -194,6 +277,7 @@ async def submit_turn(thread_id: str, body: TurnRequest, request: Request) -> di
     """
     settings = _settings(request)
     agent = request.app.state.agent
+    await record_turn(_store(request), thread_id, body.message)
     answer: dict | None = None
 
     async for name, payload in run_turn(
@@ -218,6 +302,47 @@ async def submit_turn(thread_id: str, body: TurnRequest, request: Request) -> di
             detail="the turn produced no answer",
         )
     return answer
+
+
+@app.get("/threads", response_model=ThreadListResponse)
+async def get_threads(
+    request: Request, limit: int = 50, offset: int = 0
+) -> ThreadListResponse:
+    """The conversation list, most recently used first."""
+    persistence = getattr(request.app.state, "persistence", None)
+    summaries: list[ThreadSummary] = await list_threads(
+        _store(request), limit=limit, offset=offset
+    )
+    return ThreadListResponse(
+        threads=[summary.as_json() for summary in summaries],
+        durable=bool(persistence and persistence.durable),
+    )
+
+
+@app.get("/threads/{thread_id}", response_model=ThreadResponse)
+async def get_thread(thread_id: str, request: Request) -> ThreadResponse:
+    """Reopen a conversation.
+
+    Read from the checkpointer rather than from the index: the index knows a
+    thread exists, the checkpointer knows what was said. A thread with no
+    checkpoint answers with an empty transcript rather than a 404, because it
+    is a real thread — it is one nobody has spoken to yet.
+    """
+    agent = request.app.state.agent
+    state = await agent.aget_state({"configurable": {"thread_id": thread_id}})
+    messages = (state.values or {}).get("messages", []) if state else []
+    return ThreadResponse(thread_id=thread_id, messages=_readable_messages(messages))
+
+
+@app.delete("/threads/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_thread(thread_id: str, request: Request) -> None:
+    """Drop a conversation from the list.
+
+    The checkpoint stays. "Delete" here means what it means to someone tidying
+    a sidebar, and this endpoint does not reach into storage it does not own to
+    do something irreversible.
+    """
+    await forget(_store(request), thread_id)
 
 
 @app.get("/healthz")
