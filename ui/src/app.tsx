@@ -99,7 +99,7 @@ export function App() {
                 // No metrics: the greeting is the example's own string and no
                 // model ran. Zeroes here would be a measurement of nothing.
                 metrics: {
-                  ms: null,
+                  ns: null,
                   tokensIn: null,
                   tokensOut: null,
                   costUsd: null,
@@ -152,7 +152,7 @@ export function App() {
                   violations: [],
                   blocked: false,
                   metrics: {
-                    ms: null,
+                    ns: null,
                     tokensIn: null,
                     tokensOut: null,
                     costUsd: null,
@@ -319,7 +319,7 @@ function withLiveRail(entries: Entry[], acc: TurnAccumulator): Entry[] {
     violations: [],
     blocked: false,
     metrics: {
-      ms: null,
+      ns: null,
       tokensIn: null,
       tokensOut: null,
       costUsd: null,

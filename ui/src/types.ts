@@ -89,7 +89,12 @@ export interface StageEvent {
   kind: StageKind;
   label: string;
   status: StageStatus;
-  ms: number | null;
+  /**
+   * Nanoseconds, not milliseconds, and the unit is the point. A gate runs in
+   * microseconds and a model call in seconds; milliseconds cannot hold both,
+   * and truncating to one rendered every guardrail as `0 ms`.
+   */
+  ns: number | null;
   detail: StageDetail | null;
 }
 
@@ -129,11 +134,20 @@ export interface Violation {
 // The other three frames
 // --------------------------------------------------------------------------
 
-/** The answer. `ms` is null for the greeting, which cost no model call. */
+/**
+ * The answer, and the turn's own wall time in nanoseconds.
+ *
+ * Null for the greeting, which cost no model call — a measurement never taken
+ * is not a measurement of zero.
+ *
+ * This is not the sum of the rail's cells: the graph spends time between them.
+ * Showing both is how that gap becomes visible instead of something a reader
+ * has to compute and then doubt.
+ */
 export interface TurnEvent {
   thread_id: string;
   text: string;
-  ms: number | null;
+  ns: number | null;
 }
 
 /** Always last, even after an error — a failed turn is the one you most want. */

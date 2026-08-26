@@ -82,15 +82,35 @@ async def test_every_completed_stage_carries_a_measurement(
 ) -> None:
     """A cell with no number behind it is decoration.
 
-    ``ms`` may be zero — a regex check really does take under a millisecond —
-    but it may not be absent, because absent is what a stage that was never
-    measured would report and the two must not look alike.
+    Absent is what a stage that was never measured reports, and the two must
+    not look alike.
     """
     model = scripted(says("ok"))
     stages, _ = await drive(model, "oi", settings)
     for stage in stages:
         if stage["status"] == "done" and stage["kind"] != "io":
-            assert stage["ms"] is not None, stage
+            assert stage["ns"] is not None, stage
+
+
+async def test_a_guardrail_is_measured_below_a_millisecond(
+    settings: Settings,
+) -> None:
+    """The bug that made this file switch units.
+
+    A regex over a short string takes single-digit microseconds. Reported in
+    milliseconds and truncated to an integer, every guardrail in the system
+    read `0 ms` — true, useless, and indistinguishable from "did not run" for
+    the one kind of step whose cheapness is the entire argument.
+
+    A nanosecond count is positive and under a millisecond, which is the
+    property that was unrepresentable before.
+    """
+    stages, _ = await drive(scripted(says("ok")), "oi", settings)
+    gates = [s for s in stages if s["kind"].startswith("guard") and s["ns"] is not None]
+    assert gates, "no gate reported a measurement"
+    for gate in gates:
+        assert gate["ns"] > 0, f"{gate['name']} measured zero"
+        assert gate["ns"] < 1_000_000, f"{gate['name']} took over a millisecond"
 
 
 async def test_the_model_stage_carries_tokens_and_a_cost_field(

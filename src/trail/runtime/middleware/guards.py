@@ -41,7 +41,7 @@ from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
 from langchain.messages import AIMessage
 from langgraph.runtime import Runtime
 
-from trail.runtime.events import StageEvent, emit, ms_since
+from trail.runtime.events import StageEvent, emit, ns_since
 from trail.telemetry import span
 
 # --------------------------------------------------------------------------
@@ -253,7 +253,7 @@ class InputGuard(AgentMiddleware):
     async def abefore_agent(
         self, state: AgentState, runtime: Runtime
     ) -> dict[str, Any] | None:
-        started = time.perf_counter()
+        started = time.perf_counter_ns()
         text = _last_text(state)
         with _guard_span("trail.guard.in", text) as active:
             verdict = self.check(text)
@@ -265,7 +265,7 @@ class InputGuard(AgentMiddleware):
                     kind="guard_in",
                     label=self.label,
                     status="done",
-                    ms=ms_since(started),
+                    ns=ns_since(started),
                 )
             )
             return None
@@ -275,7 +275,7 @@ class InputGuard(AgentMiddleware):
                 kind="guard_in",
                 label=self.label,
                 status="blocked",
-                ms=ms_since(started),
+                ns=ns_since(started),
                 detail=verdict.as_detail(),
             )
         )
@@ -322,7 +322,7 @@ class OutputGuard(AgentMiddleware):
                 )
             )
             return None
-        started = time.perf_counter()
+        started = time.perf_counter_ns()
         text = _last_text(state)
         with _guard_span("trail.guard.out", text) as active:
             verdict = self.check(text)
@@ -334,7 +334,7 @@ class OutputGuard(AgentMiddleware):
                     kind="guard_out",
                     label=self.label,
                     status="done",
-                    ms=ms_since(started),
+                    ns=ns_since(started),
                 )
             )
             return None
@@ -344,7 +344,7 @@ class OutputGuard(AgentMiddleware):
                 kind="guard_out",
                 label=self.label,
                 status="blocked",
-                ms=ms_since(started),
+                ns=ns_since(started),
                 detail=verdict.as_detail(),
             )
         )

@@ -31,7 +31,8 @@ import type { StageEvent, TurnEvent, Violation } from "./types";
  * wrong.
  */
 export interface TurnMetrics {
-  ms: number | null;
+  /** The turn's wall time in nanoseconds — see `TurnEvent`. */
+  ns: number | null;
   tokensIn: number | null;
   tokensOut: number | null;
   costUsd: number | null;
@@ -39,7 +40,7 @@ export interface TurnMetrics {
 }
 
 export const EMPTY_METRICS: TurnMetrics = {
-  ms: null,
+  ns: null,
   tokensIn: null,
   tokensOut: null,
   costUsd: null,
@@ -143,7 +144,7 @@ export function metricsFrom(
   traceUrl: string | null,
 ): TurnMetrics {
   return {
-    ms: turn?.ms ?? null,
+    ns: turn?.ns ?? null,
     tokensIn: acc.sawUsage ? acc.tokensIn : null,
     tokensOut: acc.sawUsage ? acc.tokensOut : null,
     costUsd: acc.costUsd,

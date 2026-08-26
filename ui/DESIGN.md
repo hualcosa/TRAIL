@@ -102,6 +102,21 @@ Three rules, each of which has been got wrong at least once:
 off and a guardrail that ran and passed must not look alike — and a hidden cell
 reads as neither, it reads as nothing.
 
+**Durations are nanoseconds on the wire and scaled at the last moment.** One
+rail spans four orders of magnitude: a regex gate runs in microseconds, a model
+call in seconds. This was milliseconds, truncated to an integer, and it rendered
+every guardrail in the system as `0 ms` — true, useless, and easily read as "did
+not run" for the one kind of step whose cheapness is the entire argument.
+
+```
+▪entrada 75.0 µs  ▪modelo 1.41 s  ▪stack_status 2.4 ms  ▪modelo 1.75 s  ▪saída 121.9 µs
+1.5k in · 193 out · US$ 0.0005 · total 3.20 s
+```
+
+The `total` is the turn's own wall time and is deliberately **not** the sum of
+the cells — those add to 3.16 s. The 40 ms of daylight is what the graph spends
+between steps, and it is only visible because both numbers are on the row.
+
 **A blocked stage gets its own glyph, not only its own colour.** `✗` against
 `▪` and `▫`. Colour is lost in a screenshot, in a printout, and to a reader who
 cannot distinguish red from grey.

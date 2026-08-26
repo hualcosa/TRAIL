@@ -18,6 +18,10 @@ every field of it exists to keep the client ignorant of the agent's domain:
 * ``status`` has four values, and ``blocked`` is the load-bearing one. Without
   it a guardrail that fired and a guardrail that passed look identical, and the
   one thing this scaffold claims to show is which of those happened.
+* ``ns`` is nanoseconds rather than milliseconds, because the steps this
+  scaffold exists to make visible are four orders of magnitude apart: a gate
+  runs in microseconds and a model call in seconds. Milliseconds cannot hold
+  both — see :func:`ns_since`.
 
 ``skip`` is equally deliberate. When a guardrail is switched off it still emits
 its frame, marked skipped, and the rail renders it struck through rather than
@@ -66,13 +70,31 @@ class StageEvent(BaseModel):
     kind: StageKind
     label: str
     status: StageStatus
-    ms: int | None = None
+    #: Nanoseconds. See :func:`ns_since` for why this is not milliseconds.
+    ns: int | None = None
     detail: dict[str, Any] | None = None
 
 
-def ms_since(started: float) -> int:
-    """Milliseconds since a :func:`time.perf_counter` reading."""
-    return int((time.perf_counter() - started) * 1000)
+def ns_since(started: int) -> int:
+    """Nanoseconds since a :func:`time.perf_counter_ns` reading.
+
+    Nanoseconds, and integer, and both halves of that are a fix for the same
+    bug. The previous version returned ``int(seconds * 1000)``, which truncates
+    toward zero — so every guardrail in this system reported **0 ms**, because
+    a regex over a short string takes single-digit *micro*seconds and a
+    millisecond is a thousand of those.
+
+    That zero was not wrong so much as unreadable: this repository's own rule is
+    that a measurement never taken is not a measurement of zero, and ``0 ms``
+    read exactly like "did not run" for the one kind of step whose cheapness is
+    the argument.
+
+    So the wire carries the finest integer unit available and no unit
+    conversion happens until something has to be shown to a person. A client
+    picks the scale — ``1.6 µs`` for a gate, ``1.47 s`` for a model call, from
+    the same field.
+    """
+    return time.perf_counter_ns() - started
 
 
 def sse(event: str, data: Any) -> str:

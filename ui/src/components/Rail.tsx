@@ -23,7 +23,7 @@
  * is the ordering a reader is reading for.
  */
 
-import { formatMs, formatTokens, formatUsd } from "../format";
+import { formatDuration, formatTokens, formatUsd } from "../format";
 import type { StageEvent } from "../types";
 import type { TurnMetrics } from "../state";
 
@@ -46,7 +46,7 @@ function Cell({ stage }: { stage: StageEvent }) {
           ? "pulado"
           : stage.status === "blocked"
             ? "bloqueado"
-            : formatMs(stage.ms)}
+            : formatDuration(stage.ns)}
       </span>
     </span>
   );
@@ -65,7 +65,7 @@ export function Rail({
   // claims a pipeline ran.
   const hasMetrics =
     metrics !== null &&
-    (metrics.tokensIn !== null || metrics.ms !== null || metrics.traceUrl !== null);
+    (metrics.tokensIn !== null || metrics.ns !== null || metrics.traceUrl !== null);
   if (!stages.length && !hasMetrics) return null;
 
   const totals: string[] = [];
@@ -77,6 +77,11 @@ export function Rail({
     // unknown cost, and omitting the field entirely would let the reader
     // assume the turn was free.
     if (metrics.tokensIn !== null) totals.push(formatUsd(metrics.costUsd));
+    // The turn's own wall time, last, and deliberately not the sum of the
+    // cells above it. The graph spends time between steps; showing both is how
+    // that gap becomes visible rather than something a reader computes and
+    // then doubts.
+    if (metrics.ns !== null) totals.push(`total ${formatDuration(metrics.ns)}`);
   }
 
   return (

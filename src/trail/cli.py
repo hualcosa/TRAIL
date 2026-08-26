@@ -47,6 +47,28 @@ THEME = Theme(
 MARK = {"done": "▪", "skip": "▫", "blocked": "✗", "start": "▪"}
 
 
+def duration(ns: int | None) -> str:
+    """A nanosecond count, at the scale a person reads it.
+
+    The steps on one rail span four orders of magnitude — a regex gate runs in
+    microseconds, a model call in seconds — so a single unit cannot show both.
+    Milliseconds was the unit before this, and it rendered every guardrail in
+    the system as `0 ms`: true, useless, and easily read as "did not run".
+
+    Three significant figures at each scale, which is the most anyone acts on
+    and the least that still distinguishes a 1.6 µs check from a 9.2 µs one.
+    """
+    if ns is None:
+        return ""
+    if ns < 1_000:
+        return f"{ns} ns"
+    if ns < 1_000_000:
+        return f"{ns / 1_000:.1f} µs"
+    if ns < 1_000_000_000:
+        return f"{ns / 1_000_000:.1f} ms"
+    return f"{ns / 1_000_000_000:.2f} s"
+
+
 class CliError(Exception):
     """An error the user can act on, rendered as a message plus a hint."""
 
@@ -95,8 +117,8 @@ def _render_rail(console: Console, stages: list[dict[str, Any]]) -> None:
             text.append("pulado  ", style="skip")
         elif status == "blocked":
             text.append("BLOQUEADO  ", style="blocked")
-        elif stage.get("ms") is not None:
-            text.append(f"{stage['ms']}ms  ", style="meta")
+        elif stage.get("ns") is not None:
+            text.append(f"{duration(stage['ns'])}  ", style="meta")
     console.print("  ", text)
 
     for stage in stages:
@@ -107,7 +129,9 @@ def _render_rail(console: Console, stages: list[dict[str, Any]]) -> None:
             )
 
 
-def _render_cost(console: Console, stages: list[dict[str, Any]]) -> None:
+def _render_cost(
+    console: Console, stages: list[dict[str, Any]], total_ns: int | None
+) -> None:
     tokens_in = tokens_out = 0
     cost: float | None = None
     for stage in stages:
@@ -123,7 +147,13 @@ def _render_cost(console: Console, stages: list[dict[str, Any]]) -> None:
     # `—` and not `$0.00`: an unpriced model has an unknown cost, and a
     # confident zero is the most expensive kind of wrong.
     money = f"US$ {cost:.4f}" if cost is not None else "—"
-    console.print(f"  [meta]{tokens_in} in · {tokens_out} out · {money}[/]")
+    parts = [f"{tokens_in} in", f"{tokens_out} out", money]
+    # The turn's own wall time, which is not the sum of the cells: the graph
+    # spends time between them. Showing both is how the gap becomes visible
+    # instead of being something a reader has to compute and then doubt.
+    if total_ns is not None:
+        parts.append(f"total {duration(total_ns)}")
+    console.print(f"  [meta]{' · '.join(parts)}[/]")
 
 
 def _render_trace(console: Console, url: str) -> None:
@@ -167,7 +197,7 @@ async def _turn(
                     console.print(Text(data["text"], style="agent"))
                     console.print()
                     _render_rail(console, stages)
-                    _render_cost(console, stages)
+                    _render_cost(console, stages, data.get("ns"))
                 elif event == "error":
                     spinner.stop()
                     console.print(

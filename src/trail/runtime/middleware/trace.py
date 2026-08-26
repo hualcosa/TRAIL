@@ -42,7 +42,7 @@ from langchain.agents.middleware import (
 from langgraph.runtime import Runtime
 
 from trail import costs
-from trail.runtime.events import StageEvent, emit, ms_since
+from trail.runtime.events import StageEvent, emit, ns_since
 from trail.runtime.middleware.guards import omitted_by
 from trail.telemetry import span
 
@@ -177,7 +177,7 @@ class TraceMiddleware(AgentMiddleware):
             attributes["trail.prompt_version"] = self.prompt_version
 
         emit(StageEvent(name="model", kind="model", label="modelo", status="start"))
-        started = time.perf_counter()
+        started = time.perf_counter_ns()
 
         # `trail.model` is set on entry, not on exit: an exception leaves the
         # span with the attribute the exporter's alias rule looks for, so a
@@ -197,12 +197,12 @@ class TraceMiddleware(AgentMiddleware):
                         kind="model",
                         label="modelo",
                         status="blocked",
-                        ms=ms_since(started),
+                        ns=ns_since(started),
                         detail={"error": type(exc).__name__, "message": str(exc)[:200]},
                     )
                 )
                 raise
-            elapsed = ms_since(started)
+            elapsed = ns_since(started)
 
             messages = getattr(response, "result", None) or []
             usage = (
@@ -232,7 +232,7 @@ class TraceMiddleware(AgentMiddleware):
                 kind="model",
                 label="modelo",
                 status="done",
-                ms=elapsed,
+                ns=elapsed,
                 detail=usage.as_detail(),
             )
         )
@@ -252,7 +252,7 @@ class TraceMiddleware(AgentMiddleware):
         """
         tool = request.tool_call.get("name", "tool")
         emit(StageEvent(name=f"tool:{tool}", kind="tool", label=tool, status="start"))
-        started = time.perf_counter()
+        started = time.perf_counter_ns()
 
         with span(
             f"trail.tool.{tool}",
@@ -276,7 +276,7 @@ class TraceMiddleware(AgentMiddleware):
                         kind="tool",
                         label=tool,
                         status="blocked",
-                        ms=ms_since(started),
+                        ns=ns_since(started),
                         detail={"error": type(exc).__name__},
                     )
                 )
@@ -289,7 +289,7 @@ class TraceMiddleware(AgentMiddleware):
                 kind="tool",
                 label=tool,
                 status="done",
-                ms=ms_since(started),
+                ns=ns_since(started),
             )
         )
         return result

@@ -31,15 +31,23 @@ export function formatTokens(value: number | null | undefined): string {
 }
 
 /**
- * A duration, in the unit that suits its size.
+ * A nanosecond count, at the scale a person reads it.
  *
- * Milliseconds below a second because a guard that ran in 0 ms is making a
- * point; seconds above, because `1724 ms` asks the reader to divide.
+ * The steps on one rail span four orders of magnitude — a regex gate runs in
+ * microseconds, a model call in seconds — so no single unit shows both. This
+ * used to be milliseconds, and it rendered every guardrail in the system as
+ * `0 ms`: true, useless, and easily read as "did not run", which is the exact
+ * ambiguity the rail exists to remove.
+ *
+ * Three significant figures at each scale: the most anyone acts on, and the
+ * least that still separates a 1.6 µs check from a 9.2 µs one.
  */
-export function formatMs(value: number | null | undefined): string {
+export function formatDuration(value: number | null | undefined): string {
   if (value === null || value === undefined) return "";
-  if (value < 1000) return `${value} ms`;
-  return `${(value / 1000).toFixed(2)} s`;
+  if (value < 1_000) return `${value} ns`;
+  if (value < 1_000_000) return `${(value / 1_000).toFixed(1)} µs`;
+  if (value < 1_000_000_000) return `${(value / 1_000_000).toFixed(1)} ms`;
+  return `${(value / 1_000_000_000).toFixed(2)} s`;
 }
 
 /**

@@ -29,7 +29,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from trail.config import Settings
-from trail.runtime.events import StageEvent, ms_since, stage_from_chunk
+from trail.runtime.events import StageEvent, ns_since, stage_from_chunk
 from trail.telemetry import current_trace_id, flush_telemetry, span, trace_url
 
 #: Frame names that cross the wire. ``turn`` carries the answer; ``error``
@@ -94,7 +94,7 @@ async def run_turn(
     now means adding token streaming later is a change to the client and not to
     this contract.
     """
-    started = time.perf_counter()
+    started = time.perf_counter_ns()
     config = {"configurable": {"thread_id": thread_id}}
     failure: BaseException | None = None
     trace_id: str | None = None
@@ -158,7 +158,7 @@ async def run_turn(
     if failure is None:
         yield (
             TURN,
-            {"thread_id": thread_id, "text": answer, "ms": ms_since(started)},
+            {"thread_id": thread_id, "text": answer, "ns": ns_since(started)},
         )
     else:
         yield ERROR, failure
@@ -171,7 +171,7 @@ def greeting_frames(thread_id: str, text: str) -> list[Frame]:
 
     A greeting is not an answer and charging a turn's tokens for one would put
     a cost on the scoreboard that bought nothing. It is emitted as a ``turn``
-    frame with ``ms`` absent rather than zero, for the same reason an unpriced
+    frame with ``ns`` absent rather than zero, for the same reason an unpriced
     model costs ``None``: a measurement that was never taken is not a
     measurement of zero.
     """
@@ -184,5 +184,5 @@ def greeting_frames(thread_id: str, text: str) -> list[Frame]:
                 name="greeting", kind="io", label="abertura", status="done"
             ).model_dump(mode="json"),
         ),
-        (TURN, {"thread_id": thread_id, "text": text, "ms": None}),
+        (TURN, {"thread_id": thread_id, "text": text, "ns": None}),
     ]

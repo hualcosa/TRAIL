@@ -18,10 +18,10 @@ pytestmark = pytest.mark.unit
 
 
 def test_a_frame_renders_as_one_sse_event() -> None:
-    rendered = sse("stage", {"name": "model", "ms": 12})
+    rendered = sse("stage", {"name": "model", "ns": 12})
     assert rendered.startswith("event: stage\ndata: ")
     assert rendered.endswith("\n\n")
-    assert json.loads(rendered.split("data: ", 1)[1]) == {"name": "model", "ms": 12}
+    assert json.loads(rendered.split("data: ", 1)[1]) == {"name": "model", "ns": 12}
 
 
 def test_accents_survive_the_wire_unescaped() -> None:
@@ -70,7 +70,9 @@ def test_a_stage_event_accepts_any_name_and_label() -> None:
 
 
 def test_a_frame_survives_a_round_trip_through_the_custom_channel() -> None:
-    event = StageEvent(name="model", kind="model", label="modelo", status="done", ms=7)
+    event = StageEvent(
+        name="model", kind="model", label="modelo", status="done", ns=7_400
+    )
     chunk = {"trail_stage": event.model_dump(mode="json")}
     assert stage_from_chunk(chunk) == event
 
