@@ -126,6 +126,22 @@ def _render_cost(console: Console, stages: list[dict[str, Any]]) -> None:
     console.print(f"  [meta]{tokens_in} in · {tokens_out} out · {money}[/]")
 
 
+def _render_trace(console: Console, url: str) -> None:
+    """Print the trace link so that clicking it opens the whole trace.
+
+    ``soft_wrap`` is the fix and it is not cosmetic. Rich wraps to the console
+    width by inserting a **real newline**, which splits a 32-character trace id
+    across two lines; a terminal click then follows only the first, Langfuse
+    looks up an id that does not exist, and the page sits on "Loading…"
+    forever. With soft wrap the byte stream holds one unbroken line and the
+    terminal's own reflow leaves the URL intact.
+
+    The OSC 8 hyperlink is belt to that braces: terminals that support it make
+    the link clickable regardless of where the line happens to fold.
+    """
+    console.print(f"  [meta]trace:[/] [link={url}]{url}[/link]", soft_wrap=True)
+
+
 async def _turn(
     client: httpx.AsyncClient, console: Console, thread_id: str, message: str
 ) -> None:
@@ -158,7 +174,7 @@ async def _turn(
                         f"  [blocked]falha {data['status']}[/] · {data['detail']}"
                     )
                 elif event == "trace" and data.get("trace_url"):
-                    console.print(f"  [meta]trace: {data['trace_url']}[/]")
+                    _render_trace(console, data["trace_url"])
 
 
 async def chat(base_url: str) -> int:
