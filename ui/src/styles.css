@@ -56,6 +56,14 @@
      3.68:1 on the page ground and fails as text. */
   --accent:        light-dark(#0e7490, #22d3ee);
 
+  /* --- tool -------------------------------------------------------------
+     A third hue, so the rail's three kinds — gate, model, tool — are
+     distinguishable without reading. Amber-800/amber-400: 4.68:1 light and
+     11.20:1 dark. Colour is never the only carrier here (the labels differ
+     too), but it is what lets the eye separate the guardrail cost from the
+     model flow at a glance, which is the whole reason the rail is one line. */
+  --tool:          light-dark(#b45309, #fbbf24);
+
   /* --- alert ------------------------------------------------------------ */
   --danger:        light-dark(#b91c1c, #f87171);
   --danger-soft:   light-dark(#fef2f2, #2d1618);
@@ -470,19 +478,29 @@ body {
   font-size: 0.75rem;
 }
 
-.rail__mark { color: var(--accent); }
+/* One hue per kind, set on the mark rather than the whole cell so the label
+   stays at full contrast against the page. The `data-kind` attribute comes
+   straight off the wire — the client is grouping by a field it does not have to
+   understand, which is what lets it render an agent nobody has written yet. */
+.rail__mark { color: var(--muted); }
+.rail__cell[data-kind="guard_in"] .rail__mark,
+.rail__cell[data-kind="guard_out"] .rail__mark { color: var(--primary); }
+.rail__cell[data-kind="model"] .rail__mark { color: var(--accent); }
+.rail__cell[data-kind="tool"] .rail__mark { color: var(--tool); }
 
 /* Struck through, never hidden. A stage that was switched off and a stage that
    ran and passed must not look alike — and a hidden cell reads as neither. */
 .rail__cell--skip { opacity: 0.6; }
 .rail__cell--skip .rail__label,
 .rail__cell--skip .rail__ms { text-decoration: line-through; }
-.rail__cell--skip .rail__mark { color: var(--muted); }
 
 /* Colour *and* weight *and* a different glyph, set in the component. Colour
-   alone is lost in a screenshot and to a reader who cannot see red. */
+   alone is lost in a screenshot and to a reader who cannot see red. The
+   `!important` is because the kind rules above are equally specific and a
+   blocked cell's status has to win over its kind. */
 .rail__cell--blocked { color: var(--danger); font-weight: 600; }
-.rail__cell--blocked .rail__mark { color: var(--danger); }
+.rail__cell--blocked .rail__mark { color: var(--danger) !important; }
+.rail__cell--skip .rail__mark { color: var(--muted) !important; }
 
 .rail__totals {
   margin: var(--s-2) 0 0;

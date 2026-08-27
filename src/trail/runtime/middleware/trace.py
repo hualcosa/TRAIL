@@ -104,6 +104,30 @@ def _tool_output(result: Any) -> Any:
     return result if content is None else content
 
 
+def _model_role(messages: Any) -> tuple[str, str]:
+    """What this model call turned out to be for: ``(name, label)``.
+
+    An agent loop calls the model more than once per turn and the calls do
+    different jobs. The first decides which tools to reach for; the last writes
+    the answer. Labelling both of them ``modelo`` puts two identical cells on
+    the rail with different durations and no way to tell which is which —
+    exactly the ambiguity the rail exists to remove.
+
+    Derived from what came back rather than from a counter, so it stays right
+    for an agent that takes four tool rounds, or none.
+    """
+    last = messages[-1] if messages else None
+    calls = getattr(last, "tool_calls", None) if last is not None else None
+    if calls:
+        # Named when there is one, counted when there are several: "which tool
+        # did it pick" is the question, and with three picks the answer is the
+        # three cells that follow.
+        if len(calls) == 1:
+            return "model.tools", f"modelo→{calls[0].get('name', 'tool')}"
+        return "model.tools", f"modelo→{len(calls)} tools"
+    return "model.answer", "modelo→resposta"
+
+
 def _model_name(request: ModelRequest) -> str:
     """The model's own name, however the provider spells the attribute.
 
@@ -176,6 +200,9 @@ class TraceMiddleware(AgentMiddleware):
         if self.prompt_version:
             attributes["trail.prompt_version"] = self.prompt_version
 
+        # The `start` frame cannot know yet which job this call is doing — that
+        # is decided by what comes back. It exists to drive a spinner, and the
+        # `done` frame that replaces it carries the real name.
         emit(StageEvent(name="model", kind="model", label="modelo", status="start"))
         started = time.perf_counter_ns()
 
@@ -226,11 +253,12 @@ class TraceMiddleware(AgentMiddleware):
             if usage.cost_usd is not None:
                 active.set_attribute("trail.cost_usd", usage.cost_usd)
 
+        name, label = _model_role(messages)
         emit(
             StageEvent(
-                name="model",
+                name=name,
                 kind="model",
-                label="modelo",
+                label=label,
                 status="done",
                 ns=elapsed,
                 detail=usage.as_detail(),

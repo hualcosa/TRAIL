@@ -109,9 +109,24 @@ every guardrail in the system as `0 ms` — true, useless, and easily read as "d
 not run" for the one kind of step whose cheapness is the entire argument.
 
 ```
-▪entrada 75.0 µs  ▪modelo 1.41 s  ▪stack_status 2.4 ms  ▪modelo 1.75 s  ▪saída 121.9 µs
-1.5k in · 193 out · US$ 0.0005 · total 3.20 s
+▪entrada 134 µs  ▪modelo→stack_status 1.51 s  ▪stack_status 1.9 ms
+▪modelo→resposta 1.88 s  ▪saída 110 µs  ▪fim
+1.5k in · 198 out · US$ 0.0005 · total 3.43 s
 ```
+
+**A model call is named for the job it did.** An agent loop calls the model more
+than once per turn: the first decides which tool to reach for, the last writes
+the answer. Both used to read `modelo`, which put two cells with different
+durations on the rail and no way to tell which was which. The name is derived
+from what came back — tool calls or content — so it stays right for an agent
+that takes four rounds, or none.
+
+**One hue per kind: gate, model, tool.** Purple, cyan, amber, on the mark rather
+than the whole cell so the label keeps full contrast. It is what lets the eye
+separate a guardrail's cost from the model flow at a glance, which is the reason
+the rail is one line. Colour is never the only carrier — the labels differ too —
+and a blocked cell's status overrides its kind, because which of those a reader
+needs first is not in question.
 
 The `total` is the turn's own wall time and is deliberately **not** the sum of
 the cells — those add to 3.16 s. The 40 ms of daylight is what the graph spends

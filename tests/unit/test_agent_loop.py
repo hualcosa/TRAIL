@@ -68,13 +68,41 @@ async def test_a_clean_turn_reports_every_step_it_took(settings: Settings) -> No
 
     assert settled(stages) == [
         ("guard_in", "done"),
-        ("model", "done"),
+        # The two model calls are named for the job each did, not numbered. An
+        # agent loop calls the model once per tool round and once to answer;
+        # two cells both reading `model` are two durations with no way to tell
+        # which is which.
+        ("model.tools", "done"),
         ("tool:search_docs", "done"),
-        ("model", "done"),
+        ("model.answer", "done"),
         ("guard_out", "done"),
         ("finish", "done"),
     ]
     assert answer.startswith("O TRAIL é")
+
+
+async def test_a_model_call_is_labelled_by_what_it_chose(
+    settings: Settings,
+) -> None:
+    """The label names the tool when exactly one was picked.
+
+    Derived from the response rather than from a counter, so it stays right for
+    an agent that takes four tool rounds — or none, where the only model call
+    is the one that answers.
+    """
+    model = scripted(calls("search_docs", query="x"), says("pronto"))
+    stages, _ = await drive(model, "oi", settings)
+    labels = {s["name"]: s["label"] for s in stages if s["kind"] == "model"}
+    assert labels["model.tools"] == "modelo→search_docs"
+    assert labels["model.answer"] == "modelo→resposta"
+
+
+async def test_a_turn_with_no_tools_has_one_model_call(settings: Settings) -> None:
+    stages, _ = await drive(scripted(says("ok")), "oi", settings)
+    models = [
+        s["name"] for s in stages if s["kind"] == "model" and s["status"] != "start"
+    ]
+    assert models == ["model.answer"]
 
 
 async def test_every_completed_stage_carries_a_measurement(

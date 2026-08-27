@@ -36,7 +36,10 @@ const MARK: Record<string, string> = {
 
 function Cell({ stage }: { stage: StageEvent }) {
   return (
-    <span className={`rail__cell rail__cell--${stage.status}`}>
+    <span
+      className={`rail__cell rail__cell--${stage.status}`}
+      data-kind={stage.kind}
+    >
       <span aria-hidden="true" className="rail__mark">
         {MARK[stage.status] ?? "·"}
       </span>
