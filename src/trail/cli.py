@@ -1,5 +1,11 @@
 """``trail chat`` — a conversation, and the pipeline behind it.
 
+``trail eval`` is the other half: the same client, driving a golden set instead
+of a person's questions, over the same endpoint. Both live here because they
+are the same claim — a client with a private code path measures a system that
+does not exist in production — and keeping them in one module is what makes
+that hard to quietly stop being true.
+
 The point of this client is the rail. Anything can print a model's answer; what
 this prints alongside it is what the turn actually did — which gates ran, which
 were switched off, how long the model took, what it cost, and a link to the
@@ -7,23 +13,34 @@ span tree. That is the claim the repository makes, and a client that showed
 only the answer would leave it unverifiable from the terminal.
 
 It speaks HTTP to the service and never imports the agent. Same interface a
-browser uses, same one an eval harness would: a client with a private code path
-measures a system that does not exist in production.
+browser uses, same one the eval harness drives.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import json
+import dataclasses
 import os
 import sys
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 from rich.console import Console
 from rich.text import Text
 from rich.theme import Theme
+
+from trail.config import Settings, get_settings
+from trail.evals import metrics as scoring
+from trail.evals import report as scorecard
+from trail.evals import store
+from trail.evals.cases import CaseOutcome
+from trail.evals.judge import bind_judge, build_session
+from trail.evals.metrics import RunReport
+from trail.evals.runner import run_golden_set
+from trail.runtime.events import duration, iter_sse
+from trail.runtime.registry import load_golden
 
 DEFAULT_BASE_URL = os.environ.get("TRAIL_AGENT_BASE_URL", "http://localhost:8000")
 
@@ -47,56 +64,12 @@ THEME = Theme(
 MARK = {"done": "▪", "skip": "▫", "blocked": "✗", "start": "▪"}
 
 
-def duration(ns: int | None) -> str:
-    """A nanosecond count, at the scale a person reads it.
-
-    The steps on one rail span four orders of magnitude — a regex gate runs in
-    microseconds, a model call in seconds — so a single unit cannot show both.
-    Milliseconds was the unit before this, and it rendered every guardrail in
-    the system as `0 ms`: true, useless, and easily read as "did not run".
-
-    Three significant figures at each scale, which is the most anyone acts on
-    and the least that still distinguishes a 1.6 µs check from a 9.2 µs one.
-    """
-    if ns is None:
-        return ""
-    if ns < 1_000:
-        return f"{ns} ns"
-    if ns < 1_000_000:
-        return f"{ns / 1_000:.1f} µs"
-    if ns < 1_000_000_000:
-        return f"{ns / 1_000_000:.1f} ms"
-    return f"{ns / 1_000_000_000:.2f} s"
-
-
 class CliError(Exception):
     """An error the user can act on, rendered as a message plus a hint."""
 
     def __init__(self, message: str, hint: str = ""):
         super().__init__(message)
         self.hint = hint
-
-
-async def _iter_sse(lines: Any) -> Any:
-    """Yield ``(event, data)`` from an SSE line stream, as they arrive.
-
-    Async and incremental on purpose: buffering the whole response before
-    parsing it would make the rail appear all at once, at the end, which is a
-    stream indistinguishable from a slow request — the exact failure the
-    ``X-Accel-Buffering: no`` header on the server exists to prevent.
-
-    Deliberately minimal otherwise: this endpoint sends only ``event:`` and
-    ``data:``, one line of each per frame, and handling ids, retries and
-    multi-line data would be handling cases the server never produces.
-    """
-    event = None
-    async for line in lines:
-        if not line:
-            event = None
-        elif line.startswith("event:"):
-            event = line[6:].strip()
-        elif line.startswith("data:") and event:
-            yield event, json.loads(line[5:].strip())
 
 
 def _render_rail(console: Console, stages: list[dict[str, Any]]) -> None:
@@ -185,7 +158,7 @@ async def _turn(
         # shown and then discarded; only completed ones join the rail, which is
         # reprinted whole once the answer arrives.
         with console.status("", spinner="dots") as spinner:
-            async for event, data in _iter_sse(response.aiter_lines()):
+            async for event, data in iter_sse(response.aiter_lines()):
                 if event == "stage":
                     if data["status"] == "start":
                         spinner.update(f"[meta]{data['label']}…[/]")
@@ -242,12 +215,127 @@ async def chat(base_url: str) -> int:
             await _turn(client, console, thread["thread_id"], message)
 
 
+async def evaluate(base_url: str, concurrency: int = 4) -> int:
+    """Run the mounted example's golden set and print the scorecard.
+
+    The whole command is a composition and deliberately holds no logic of its
+    own: the registry resolves the golden set, the runner drives it over HTTP,
+    `metrics` scores it against bars the example registered, `store` files it
+    and finds the baseline, `report` renders it. Anything decided here would be
+    a threshold living in a client.
+    """
+    console = Console(theme=THEME)
+    settings = get_settings()
+    try:
+        golden = load_golden(settings.agent)
+    except (ValueError, ModuleNotFoundError) as exc:
+        raise CliError(
+            f"o exemplo {settings.agent!r} não traz um golden set: {exc}",
+            hint="um exemplo é medível quando expõe examples/<pacote>/golden.py",
+        ) from exc
+
+    console.print(
+        f"[meta]golden set[/] {golden.version}  "
+        f"[meta]{len(golden.cases)} casos[/]  [meta]concorrência[/] {concurrency}"
+    )
+
+    def announce(outcome: CaseOutcome) -> None:
+        mark = "[ok]▪[/]" if outcome.passed else "[blocked]✗[/]"
+        console.print(f"  {mark} {outcome.case_id}")
+
+    # Built and bound unconditionally. Constructing the model costs nothing —
+    # no call is made until a case actually declares a judge check — and the
+    # alternative is inspecting case bodies to guess whether one does.
+    session = build_session(settings)
+    started_at = datetime.now(UTC)
+    async with httpx.AsyncClient(base_url=base_url, timeout=180.0) as client:
+        try:
+            (await client.get("/healthz", timeout=10.0)).raise_for_status()
+        except httpx.HTTPError as exc:
+            raise CliError(
+                f"não consegui falar com o agente em {base_url}: {exc}",
+                hint="a stack está de pé? `make up`",
+            ) from exc
+        with bind_judge(session):
+            outcomes = await run_golden_set(
+                golden, client=client, concurrency=concurrency, on_done=announce
+            )
+
+    report = scoring.compute_metrics(outcomes, golden, judge=session.ledger)
+    report = await _persist(console, report, settings, started_at)
+    scorecard.render(
+        console,
+        report,
+        agent=settings.agent,
+        model=settings.model,
+        guardrails=settings.guardrails,
+        run_id=report.run_id,
+    )
+    # The exit code is the criterion, so `make eval` can gate a merge. A FAILED
+    # run or a crossed threshold is a non-zero exit; a regression that stayed
+    # inside its bar is reported and does not fail the command.
+    crossed = [m for m in report.metrics if not m.clears]
+    return 1 if report.status == "FAILED" or crossed else 0
+
+
+async def _persist(
+    console: Console, report: RunReport, settings: Settings, started_at: datetime
+) -> RunReport:
+    """File the run, attach the baseline comparison, return the report.
+
+    Storage failure never costs a run: the scorecard still prints, with a line
+    saying it was not recorded. Losing an afternoon's numbers because Postgres
+    was down would be the most annoying possible failure mode for a harness.
+    """
+    try:
+        connection = await store.connect(settings.database_url)
+    except Exception as exc:
+        console.print(
+            f"  [blocked]não registrado[/] [meta]{type(exc).__name__}: "
+            f"{exc}; sem baseline e sem histórico[/]"
+        )
+        return report
+
+    async with connection:
+        baseline = await store.latest_baseline(connection, report.golden_set_version)
+        if baseline is not None:
+            report = dataclasses.replace(
+                report,
+                baseline_id=baseline.id,
+                regressions=scoring.compare_to_baseline(
+                    report, baseline.metrics, baseline.golden_set_version
+                ),
+            )
+        run_id = await store.save_run(
+            connection,
+            report,
+            agent=settings.agent,
+            model=settings.model,
+            guardrails=settings.guardrails,
+            judge_model=settings.judge_model,
+            started_at=started_at,
+        )
+    return dataclasses.replace(report, run_id=run_id)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="trail", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
     chat_cmd = sub.add_parser("chat", help="hold a conversation with the agent")
     chat_cmd.add_argument("--base-url", default=DEFAULT_BASE_URL)
+
+    eval_cmd = sub.add_parser(
+        "eval", help="run the mounted example's golden set against the agent"
+    )
+    eval_cmd.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    eval_cmd.add_argument(
+        "--concurrency",
+        type=int,
+        default=4,
+        help="cases in flight at once; raise it and the latency percentiles "
+        "start measuring the queue rather than the agent",
+    )
 
     health = sub.add_parser("health", help="check that the agent is up")
     health.add_argument("--base-url", default=DEFAULT_BASE_URL)
@@ -268,9 +356,10 @@ async def health(base_url: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    runner = {"chat": chat, "health": health}[args.command]
+    runner = {"chat": chat, "eval": evaluate, "health": health}[args.command]
+    extra = {"concurrency": args.concurrency} if args.command == "eval" else {}
     try:
-        return asyncio.run(runner(args.base_url))
+        return asyncio.run(runner(args.base_url, **extra))
     except CliError as exc:
         console = Console(theme=THEME, stderr=True)
         console.print(f"[blocked]erro[/] {exc}")

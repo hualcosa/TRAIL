@@ -1,9 +1,9 @@
 # TRAIL — Traced Runtime for Agents, Instrumented Locally
 
-A local, full-stack scaffold for building agentic systems that can be **argued with**. Five services
-under Docker Compose: a browser demo, a conversation service, an evaluation harness, Postgres and
-Langfuse. Every turn emits a trace. Every trace carries a cost. A golden set drives the agent over the
-same HTTP interface a human drives, so the thing you measure is the thing you shipped.
+A local, full-stack scaffold for building agentic systems that can be **argued with**. Four services
+under Docker Compose — a browser demo, a conversation service, Postgres and Langfuse — plus
+`make eval`, which drives a golden set over the same HTTP interface a human drives. Every turn emits
+a trace. Every trace carries a cost. The thing you measure is the thing you shipped.
 
 TRAIL is not an agent framework. It does not want to own your prompts, your graph, or your model
 calls — LangGraph, an SDK, or a `while` loop are all fine, and TRAIL never sees inside them. What it
@@ -43,7 +43,7 @@ Three pillars. The acronym is not decoration — it is the component list.
 |---|---|---|---|
 | **T·R** | **Traced Runtime** | An LLM+tools agent with **switchable input and output guardrails**, a swappable checkpointer, and a FastAPI service that streams every step of a turn as it happens. The loop is LangChain's `create_agent`; what TRAIL adds is the seam and the reporting. | **`shipped`** |
 | **I** | **Instrumentation** | OTel → OTLP/HTTP → self-hosted Langfuse, wired. Model calls arrive typed as **generations** with model, tokens and cost, not as anonymous spans. Trace deep links stamped onto API responses, so an answer is one click from the span that produced it. | **`shipped`** |
-| **L** | **…Locally** — and the golden set | An evaluation harness that drives your agent over HTTP, computes metrics against **pre-registered thresholds**, classifies failures into a taxonomy, and detects regression against a previous run. | **`designed`** |
+| **L** | **…Locally** — and the golden set | An evaluation harness that drives your agent over HTTP, computes metrics against **pre-registered thresholds**, classifies failures into a taxonomy, and detects regression against a previous run. Cases compose deterministic checks and LLM-judge checks freely; the grader's tokens are tallied apart from the agent's, and a run graded by the agent's own model says so on the scorecard. | **`shipped`** |
 
 The fourth thing, which does not fit the acronym and matters as much: **a pipeline rail that shows
 the machinery rather than the tokens.** A guardrail that is switched off still reports itself,
@@ -111,6 +111,7 @@ cp .env.example .env          # set TRAIL_LLM_API_KEY
 make test                     # the unit suite, offline, no credentials needed
 make up                       # the stack
 make chat                     # hold a conversation, and watch the pipeline behind it
+make eval                     # drive the golden set and print the scorecard
 ```
 
 `make chat` is the demo surface. It prints the answer and, under it, the rail: which gates ran,
@@ -186,7 +187,7 @@ layer before deciding whether to trust the rest.
 |---|---|
 | `ui` | The demo surface. nginx serving a built Vite bundle, and the reverse proxy that puts the app and the API on **one origin** — which is why there is no CORS middleware anywhere in this repository. |
 | `agent` | Your conversation. TRAIL owns the HTTP shell, the streaming, the persistence and the spans. You own what happens between them. |
-| `postgres` | Conversation state, when `TRAIL_CHECKPOINTER=postgres`. The tables are LangGraph's and it creates and migrates them itself — declaring a hand-written copy here would mean being wrong about it on the first upgrade. `db/schema.sql` is therefore almost empty, on purpose. |
+| `postgres` | Conversation state, when `TRAIL_CHECKPOINTER=postgres`, plus the two eval tables. The conversation tables are LangGraph's and it creates and migrates them itself — declaring a hand-written copy would mean being wrong about it on the first upgrade — so `db/schema.sql` holds only `eval_runs` and `eval_findings`, which are TRAIL's own data with no upstream owner. That is the test for whether a table belongs in the file at all. |
 | `langfuse` | Self-hosted v4 — web, worker, ClickHouse, Redis, MinIO and its own Postgres. Six containers, because LLM observability is a different shape of problem from request tracing. The traces are the product, not a debugging aid you add later. |
 
 **One image, two roles.** The `agent` service and the CLI are the same build with a different entry
@@ -356,7 +357,7 @@ src/trail/
   costs.py                    Per-model rates; an unpriced model costs None, never zero
   telemetry.py                OTel SDK → OTLP → Langfuse, and the trace deep links
   app.py                      FastAPI: POST /threads, /threads/{id}/turns/stream
-  cli.py                      trail chat — the conversation, and the rail behind it
+  cli.py                      trail chat · trail eval — one client, two ways to drive it
   runtime/
     agent.py                  build_agent: model + tools + gates + persistence
     checkpointers.py          memory | postgres, as a swappable slot
@@ -365,9 +366,16 @@ src/trail/
     middleware/
       guards.py               GuardVerdict, InputGuard, OutputGuard, and the dial
       trace.py                The rail, and the span attributes Langfuse promotes
-  evals/                      `designed` — runner · thresholds · taxonomy · report
+  evals/
+    cases.py                  Case, Observation, Finding — and the deterministic checks
+    judge.py                  A check whose verdict is a model's, tallied separately
+    runner.py                 Drives the golden set over the agent's own HTTP endpoint
+    metrics.py                The arithmetic, the honest denominator, the regression
+    store.py                  eval_runs · eval_findings, and the baseline lookup
+    report.py                 The terminal scorecard: violations first, then numbers
 
 examples/trail_guide/         The agent that explains TRAIL. Two tools, three checks
+  golden.py                   Its twelve cases and its pre-registered thresholds
 ui/                           `extraction` — the browser surface, mid-rewrite
 tests/                        Unit tests offline; integration tests behind a marker
 ```

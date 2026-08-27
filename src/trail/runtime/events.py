@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import AsyncIterator
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -108,6 +109,62 @@ def sse(event: str, data: Any) -> str:
     """
     payload = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
     return f"event: {event}\ndata: {payload}\n\n"
+
+
+async def iter_sse(lines: Any) -> AsyncIterator[tuple[str, Any]]:
+    """Yield ``(event, data)`` from an SSE line stream, as they arrive.
+
+    The inverse of :func:`sse`, and it lives beside it for the reason this
+    module exists: the wire contract is one vocabulary, not one per client.
+    The CLI and the eval harness both read this stream, and a harness with its
+    own parser would be a second reading of a format only one of them was
+    tested against.
+
+    Async and incremental on purpose: buffering the whole response before
+    parsing it would make the rail appear all at once, at the end, which is a
+    stream indistinguishable from a slow request — the exact failure the
+    ``X-Accel-Buffering: no`` header above exists to prevent.
+
+    Deliberately minimal otherwise: this endpoint sends only ``event:`` and
+    ``data:``, one line of each per frame, and handling ids, retries and
+    multi-line data would be handling cases the server never produces.
+    """
+    event: str | None = None
+    async for line in lines:
+        if not line:
+            event = None
+        elif line.startswith("event:"):
+            event = line[6:].strip()
+        elif line.startswith("data:") and event:
+            yield event, json.loads(line[5:].strip())
+
+
+def duration(ns: int | None) -> str:
+    """A nanosecond count, at the scale a person reads it.
+
+    The inverse of :attr:`StageEvent.ns`, and the second half of the argument
+    that field's docstring makes: the wire carries the finest integer unit
+    available, and no unit conversion happens until something has to be shown
+    to a person. This is that moment, and it is shared — the chat rail and the
+    eval scorecard render the same number the same way.
+
+    The steps on one rail span four orders of magnitude — a regex gate runs in
+    microseconds, a model call in seconds — so a single unit cannot show both.
+    Milliseconds was the unit before this, and it rendered every guardrail in
+    the system as ``0 ms``: true, useless, and easily read as "did not run".
+
+    Three significant figures at each scale, which is the most anyone acts on
+    and the least that still distinguishes a 1.6 µs check from a 9.2 µs one.
+    """
+    if ns is None:
+        return ""
+    if ns < 1_000:
+        return f"{ns} ns"
+    if ns < 1_000_000:
+        return f"{ns / 1_000:.1f} µs"
+    if ns < 1_000_000_000:
+        return f"{ns / 1_000_000:.1f} ms"
+    return f"{ns / 1_000_000_000:.2f} s"
 
 
 def error_json(exc: BaseException) -> dict[str, Any]:

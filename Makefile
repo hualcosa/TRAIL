@@ -14,7 +14,7 @@ UV      ?= uv
 # this one was ported from publishes, so running both stacks at once collides on
 # all three. Override the ones that clash:
 #
-#   make up AGENT_PORT=8010 EVALS_PORT=8011 POSTGRES_PORT=55432 UI_PORT=5273
+#   make up AGENT_PORT=8010 POSTGRES_PORT=55432 UI_PORT=5273
 #
 # The same variables have to be passed to `down`, `logs`, `chat`, `eval` and
 # `test-integration`, since they also build the host-side addresses below.
@@ -24,7 +24,6 @@ UV      ?= uv
 # switch. Run both at once and they collide; that is the intended trade, since
 # running both at once means you have two copies of the same app.
 AGENT_PORT        ?= 8000
-EVALS_PORT        ?= 8001
 POSTGRES_PORT     ?= 5432
 UI_PORT           ?= 5173
 LANGFUSE_WEB_PORT ?= 3000
@@ -36,11 +35,10 @@ LANGFUSE_WEB_PORT ?= 3000
 HOST_ENV := \
 	TRAIL_DATABASE_URL=postgresql://trail:trail@localhost:$(POSTGRES_PORT)/trail \
 	TRAIL_AGENT_BASE_URL=http://localhost:$(AGENT_PORT) \
-	TRAIL_EVALS_BASE_URL=http://localhost:$(EVALS_PORT) \
 	TRAIL_OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:$(LANGFUSE_WEB_PORT)/api/public/otel/v1/traces
 
 .DEFAULT_GOAL := help
-.PHONY: help up down logs chat ui-dev test test-integration fmt lint clean
+.PHONY: help up down logs chat eval ui-dev test test-integration fmt lint clean
 
 help: ## List the targets
 	@grep -hE '^[a-z][a-z-]*:.*?## ' $(MAKEFILE_LIST) \
@@ -67,6 +65,9 @@ logs: ## Follow logs from every service
 
 chat: .env ## Hold a conversation with the agent from the CLI
 	$(COMPOSE) run --rm client trail chat
+
+eval: .env ## Run the mounted example's golden set against the running stack (`make up` first)
+	$(COMPOSE) run --rm client trail eval
 
 ui-dev: ## Run the Vite dev server on the host against the running stack (`make up` first)
 	cd ui && npm install && npm run dev

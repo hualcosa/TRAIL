@@ -61,6 +61,14 @@ class Settings(BaseSettings):
 
     prompt_version: str = "2026-08-15.2"
 
+    #: The model that grades the golden set's judge checks. Empty means the
+    #: agent's own model, which is the default because demanding a second model
+    #: to run the suite at all is how a suite stops being run — and the
+    #: scorecard flags every such run as self-evaluation rather than letting
+    #: the bias pass unstated. Set it to a different model and the flag goes
+    #: away, which is the only thing that actually removes the bias.
+    judge_model: str = ""
+
     #: ``none`` disables reasoning. Extraction copies what was said; it does not
     #: deliberate, and reasoning tokens here are latency and spend with nothing
     #: to show for them.

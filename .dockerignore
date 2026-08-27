@@ -29,11 +29,13 @@ dist/
 .coverage
 htmlcov/
 
-# Not needed to build or run the image. `db/schema.sql` is mounted into the
-# postgres container, not into this one; tests run on the host.
+# Not needed to build or run the image. `db/` is *not* in this list: the
+# postgres container reads `db/schema.sql` as its init hook, and so does
+# `trail.evals.store`, which applies the same file to create the two eval
+# tables on a volume that predates the harness. One DDL definition, two
+# readers, and the second one lives inside this image.
 research/
 tests/
-db/
 docs/
 
 # The frontend. It builds from its own context (./ui) with its own Dockerfile

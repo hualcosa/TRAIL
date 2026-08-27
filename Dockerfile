@@ -86,7 +86,11 @@ WORKDIR /app
 # example answers *from* them, and in the image the package lives under
 # site-packages, whose parents hold no README. Without these the agent runs,
 # looks healthy, and answers every question with "not documented".
+# `db/` ships because `trail.evals.store` applies this same file to create its
+# two tables on a volume that predates the harness. One DDL definition, read
+# by both the Postgres init hook and the harness.
 COPY --chown=trail:trail README.md docker-compose.yml ./
+COPY --chown=trail:trail db/ ./db/
 
 USER trail
 
