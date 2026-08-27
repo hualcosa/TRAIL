@@ -10,9 +10,8 @@
 COMPOSE ?= docker compose
 UV      ?= uv
 
-# Published host ports. These are the same defaults the healthcare repository
-# this one was ported from publishes, so running both stacks at once collides on
-# all three. Override the ones that clash:
+# Published host ports. Two TRAIL instances on one machine collide on all three,
+# so override the ones that clash:
 #
 #   make up AGENT_PORT=8010 POSTGRES_PORT=55432 UI_PORT=5273
 #

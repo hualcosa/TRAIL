@@ -10,28 +10,21 @@ calls — LangGraph, an SDK, or a `while` loop are all fine, and TRAIL never see
 owns is the part nobody enjoys building and everybody needs by week three: **the spine that makes an
 agent's behaviour observable, reproducible and falsifiable.**
 
-The name is literal, and it is a debt. TRAIL is the scaffold behind
-[**The Audit Trail**](https://github.com/hualcosa) — a series on AI platform architecture and
-observability in regulated industries. Every entry in the series ships a working demo, and every demo
-is an instance of this repository.
+The name is literal. TRAIL is the scaffold behind [**The Audit Trail**](https://github.com/hualcosa)
+— a series on AI platform architecture and observability in regulated industries, banking, financial
+services and insurance first. Every entry in the series ships a working demo, and every demo is an
+instance of this repository.
 
 ---
 
-> ## Status: this README describes TRAIL as it is meant to be
+> ## Status
 >
-> TRAIL is being extracted from a working system, not designed on a whiteboard. The collections agent
-> it came from runs today — 563 unit tests, five services, a fifteen-case golden set. What does not
-> exist yet is the *seam*: the code still carries the names of the domain it was born in.
+> Everything this README describes runs today: `make test` passes 253 unit tests offline at 97%
+> coverage, `make up` starts the stack, `make chat` and the browser drive the same runtime, and
+> `make eval` grades a twelve-case golden set against pre-registered thresholds. The one thing
+> described here that is not built is the cloud deployment (§9), and it says so where it appears.
 >
-> Every claim below is marked:
->
-> | Marker | Means |
-> |---|---|
-> | **`shipped`** | Runs today. You can execute it. Extraction is mechanical renaming. |
-> | **`extraction`** | The code exists and works, but is still named for collections. The work is de-doming it. |
-> | **`designed`** | Argued for and specified. Not written. |
->
-> No section is unmarked. When a marker is wrong, that is a bug in this file.
+> When this file and the code disagree, that is a bug in this file.
 
 ---
 
@@ -39,17 +32,18 @@ is an instance of this repository.
 
 Three pillars. The acronym is not decoration — it is the component list.
 
-| | Pillar | What it is | Status |
-|---|---|---|---|
-| **T·R** | **Traced Runtime** | An LLM+tools agent with **switchable input and output guardrails**, a swappable checkpointer, and a FastAPI service that streams every step of a turn as it happens. The loop is LangChain's `create_agent`; what TRAIL adds is the seam and the reporting. | **`shipped`** |
-| **I** | **Instrumentation** | OTel → OTLP/HTTP → self-hosted Langfuse, wired. Model calls arrive typed as **generations** with model, tokens and cost, not as anonymous spans. Trace deep links stamped onto API responses, so an answer is one click from the span that produced it. | **`shipped`** |
-| **L** | **…Locally** — and the golden set | An evaluation harness that drives your agent over HTTP, computes metrics against **pre-registered thresholds**, classifies failures into a taxonomy, and detects regression against a previous run. Cases compose deterministic checks and LLM-judge checks freely; the grader's tokens are tallied apart from the agent's, and a run graded by the agent's own model says so on the scorecard. | **`shipped`** |
+| | Pillar | What it is |
+|---|---|---|
+| **T·R** | **Traced Runtime** | An LLM+tools agent with **switchable input and output guardrails**, a swappable checkpointer, and a FastAPI service that streams every step of a turn as it happens. The loop is LangChain's `create_agent`; what TRAIL adds is the seam and the reporting. |
+| **I** | **Instrumentation** | OTel → OTLP/HTTP → self-hosted Langfuse, wired. Model calls arrive typed as **generations** with model, tokens and cost, not as anonymous spans. Trace deep links stamped onto API responses, so an answer is one click from the span that produced it. |
+| **L** | **…Locally** — and the golden set | An evaluation harness that drives your agent over HTTP, computes metrics against **pre-registered thresholds**, classifies failures into a taxonomy, and detects regression against a previous run. Cases compose deterministic checks and LLM-judge checks freely; the grader's tokens are tallied apart from the agent's, and a run graded by the agent's own model says so on the scorecard. |
 
 The fourth thing, which does not fit the acronym and matters as much: **a pipeline rail that shows
 the machinery rather than the tokens.** A guardrail that is switched off still reports itself,
 rendered struck through instead of hidden — because which path the turn took is the information, and
-a hidden cell lets a skipped stage pass for a successful one. **`shipped`** in the CLI,
-**`extraction`** in the browser.
+a hidden cell lets a skipped stage pass for a successful one. The rail is the same data in the CLI
+and in the browser; the browser additionally names each model call for the job it did and colours
+it by kind.
 
 ### The guardrail dial
 
@@ -87,8 +81,8 @@ asks now is narrower and much harder:
 TRAIL's answer is three commitments, and they are the reason the scaffold is shaped the way it is.
 
 **The eval harness drives the same interface the human drives.** Not a test-only code path, not a
-mocked service. `POST /calls/{id}/turns` is what the CLI calls, what the browser calls, and what the
-golden set calls. A harness with its own entry point measures a system that does not exist in
+mocked service. `POST /threads/{id}/turns` is what the CLI calls, what the browser calls, and what
+the golden set calls. A harness with its own entry point measures a system that does not exist in
 production.
 
 **Thresholds are pre-registered in code, before results.** A metric you choose after seeing the run is
@@ -103,10 +97,8 @@ are no tokens to stream anyway, and the pipeline is the only honest thing to sho
 
 ## 3. Quickstart
 
-**`shipped`**
-
 ```bash
-git clone https://github.com/hualcosa/trail && cd trail
+git clone https://github.com/hualcosa/TRAIL && cd TRAIL
 cp .env.example .env          # set TRAIL_LLM_API_KEY
 make test                     # the unit suite with coverage (fails under 90%), offline, no credentials needed
 make up                       # the stack
@@ -114,8 +106,9 @@ make chat                     # hold a conversation, and watch the pipeline behi
 make eval                     # drive the golden set and print the scorecard
 ```
 
-`make chat` is the demo surface. It prints the answer and, under it, the rail: which gates ran,
-which were switched off, how long the model took, what it cost, and a link to the span tree.
+`make chat` is the CLI demo surface. It prints the answer and, under it, the rail: which gates ran,
+which were switched off, how long the model took, what it cost, and a link to the span tree. The
+browser at http://localhost:5173 shows the same conversation with the same rail under every answer.
 
 ```
 › quais serviços sobem?
@@ -141,10 +134,10 @@ buys no tokens — and the rail says so rather than leaving the absence to be in
 
 | Surface | URL |
 |---|---|
+| **Demo UI** | **http://localhost:5173** |
 | **Langfuse** | **http://localhost:3000** |
 | Agent OpenAPI | http://localhost:8000/docs |
 | Postgres | `localhost:5432` |
-| Demo UI | http://localhost:5173 — **`extraction`**, mid-rewrite, currently broken |
 
 **You do have to sign in to Langfuse, once.** Langfuse v4 OSS has no unauthenticated mode — the
 only auth switches it exposes are "disable signup" and "disable password login", and the second
@@ -160,18 +153,17 @@ Every port is overridable on the command line, because you will eventually run t
 and they will collide: `make up AGENT_PORT=8010 POSTGRES_PORT=55432 UI_PORT=5273`.
 Pass the same values to `make chat`, which builds host-side addresses from them.
 
-The first `make up` takes noticeably longer than before — ClickHouse and Prisma migrations run on
+The first `make up` takes noticeably longer than the rest — ClickHouse and Prisma migrations run on
 the empty Langfuse volumes.
 
 **The unit suite runs with no network and no credentials.** That is a design commitment, not an
 accident: it means a reviewer can clone the repository and verify every claim about the deterministic
-layer before deciding whether to trust the rest.
+layer before deciding whether to trust the rest. `make test-integration` is the other tier: fourteen
+tests against the running stack, behind a marker.
 
 ---
 
 ## 4. Architecture
-
-**`shipped`** — this topology runs today.
 
 ```
   browser ──▶  ui :5173  ──nginx, /api/ ──┐
@@ -179,7 +171,7 @@ layer before deciding whether to trust the rest.
                                           │       │
                                           │       └── examples/, mounted by TRAIL_AGENT
                                           │
-  agent ──▶  postgres :5432    threads · checkpoints · cross-thread memory
+  agent ──▶  postgres :5432    threads · checkpoints · cross-thread memory · eval runs
   every service exports spans ──▶  langfuse :3000
 ```
 
@@ -197,8 +189,6 @@ point, so a dependency drift between a client and the thing it drives is not pos
 
 ## 5. What is yours, and what is TRAIL's
 
-**`designed`** — the seam is specified; drawing it is the extraction work.
-
 TRAIL's bet is that this line is drawable, and that most scaffolds put it in the wrong place by
 trying to abstract the *agent*. The agent is exactly the part you should write yourself.
 
@@ -210,8 +200,9 @@ trying to abstract the *agent*. The agent is exactly the part you should write y
 | Nothing about persistence | A checkpointer and a store as swappable slots: in memory for tests, in Postgres for anything a user comes back to |
 | Your golden set and your thresholds | The runner, the metrics engine, the failure taxonomy, regression detection, the report |
 
-An example agent is a system prompt, some plain functions, and two checks — see
-`examples/trail_guide/`. It imports no framework at all, which is what makes it portable to whatever
+An example agent is a system prompt, some plain functions, and a `GuardSpec` naming its checks —
+see `examples/trail_guide/`. It imports TRAIL's seam types (`AgentSpec`, `GuardSpec`, the check
+combinators) and nothing from the framework underneath, which is what makes it portable to whatever
 this runtime is built on next.
 
 **What TRAIL deliberately does not abstract:** the *content* of a guardrail. TRAIL owns when a check
@@ -222,13 +213,12 @@ a pluggable rule engine that satisfied two domains would prevent nothing in eith
 
 ## 6. How the seam was found
 
-**`shipped`** — this measurement is real and reproducible from the collections repository's history.
-
 This is the part of TRAIL that is not a taste claim.
 
-The collections build began as a **mechanical port** of a healthcare agent — a different regulator, a
-different language, a different conversation. That makes the repository an experiment that already
-ran: a scaffold subjected to a full domain change, with the result in git.
+TRAIL was extracted from a runtime that had already been ported once, whole, from one regulated
+domain to another — a different regulator, a different language, a different conversation. That
+makes the pre-extraction repository an experiment that already ran: a scaffold subjected to a full
+domain change, with the result in git.
 
 The naive question — "what transferred unchanged?" — has a bleak answer. **Zero Python files survived
 the port untouched.** All 21 were modified.
@@ -261,15 +251,16 @@ Below the line is domain, and the two most-deleted modules are exactly the two �
 generalise. A 29% rewrite of the compliance gate is what "regulator-independent mechanism,
 domain-specific rules" looks like when you count it instead of asserting it.
 
-One honest caveat: the port was mechanical, so churn since then mixes *domain adaptation* with
-*features added later*. `agent/app.py`'s 586 added lines are the SSE streaming — new capability, and
-generic. Deletion separates the two reasonably well. Not perfectly.
+Two honest caveats. The port was mechanical, so churn since then mixes *domain adaptation* with
+*features added later*; deletion separates the two reasonably well, not perfectly. And the
+measurement was taken on the pre-extraction repository, which is private — the numbers are recorded
+here, not reproducible from this one.
 
 ---
 
 ## 7. The example agent
 
-**`shipped`** — `examples/trail_guide/`, mounted by `TRAIL_AGENT=trail_guide`.
+`examples/trail_guide/`, mounted by `TRAIL_AGENT=trail_guide`.
 
 TRAIL ships with an agent that explains TRAIL. Two tools, both offline: `search_docs` greps this
 repository's documentation and returns passages with `file:line`, and `stack_status` lists the
@@ -280,12 +271,12 @@ Self-reference is doing real work here rather than being cute. The guide is the 
 a real model, real tools, both gates, a rail with real measurements — *and* the onboarding, so it
 does not rot the way an example nobody runs does.
 
-Its two checks are the shape most agents actually need, and neither is enforceable by a prompt:
+Its checks are the shape most agents actually need, and none is enforceable by a prompt:
 
 | Gate | Check | Refuses |
 |---|---|---|
-| input | `injection` | attempts to rewrite the agent's instructions — and costs no tokens, because it runs before the model |
-| output | `no_secret_leak` | anything with the shape of a credential, or this process's own key |
+| input | `injection_check` | attempts to rewrite the agent's instructions — and costs no tokens, because it runs before the model |
+| output | `secret_leak_check` | anything with the shape of a credential, or this process's own key |
 | output | `no_fabricated_ids` | a `TRAIL_*` setting **that does not exist** |
 
 `no_fabricated_ids` is the one to study. Ask *"how do I enable turbo mode in TRAIL?"* and any model
@@ -298,32 +289,34 @@ That is the domain-free version of every regulated-content thesis TRAIL was buil
 
 > **Never state an identifier the system does not have.**
 
+Its golden set (`golden.py`) is twelve cases and eight pre-registered thresholds, each with a grade,
+and `make eval` prints the scorecard and the regression against the previous stored run.
+
 ---
 
 ## 8. Consuming TRAIL
-
-**`designed`** — and the shape is an **open decision**, recorded here rather than hidden.
 
 TRAIL is meant to be instanced, not forked-and-forgotten. Two shapes, and they are different
 architectures:
 
 | Shape | What it buys | What it costs |
 |---|---|---|
-| **Package** — `pip install trail-spine @ git+…@v0.3.0` | Real versioning. A fix reaches every demo. The seam is enforced by the import boundary. | Every seam mistake becomes an API break. You must be right about the interface early. |
+| **Package** — `pip install trail @ git+…@<tag>` | Real versioning. A fix reaches every demo. The seam is enforced by the import boundary. | Every seam mistake becomes an API break. You must be right about the interface early. |
 | **Template** — clone, rename, diverge | No coupling. Each demo evolves freely. | Fixes never propagate. After four demos you have four scaffolds. |
 
 The pull is toward **package**, because the whole argument of §6 is that the spine is stable enough to
-version. The risk is committing to an interface before a second consumer has stressed it. The likely
-answer is a package with a deliberately small surface and a `v0.x` that promises nothing.
+version, and `pyproject.toml` already builds one. The risk is committing to an interface before a
+second consumer has stressed it.
 
-Undecided, on purpose. It will be settled before the extraction, not during it.
+The second consumer is decided: **a separate repository that deploys this stack to AWS** (§9). The
+package-or-template question gets settled by that repository, on contact with a real consumer, not
+in advance. A `v0.x` that promises nothing is the likely landing point.
 
 ---
 
 ## 9. What is deliberately not in TRAIL
 
-**`designed`** — the reasoning is inherited from the collections build, where each of these was
-argued and declined.
+Each of these was argued and declined.
 
 | Not included | Why |
 |---|---|
@@ -332,39 +325,39 @@ argued and declined.
 | **A hand-written trace table** | Per-call tokens, cost and latency live in Langfuse. A local table duplicating them would be a second source of truth for the same numbers — the one this repository can least afford to have disagree with itself. |
 | **Token streaming, for now** | The `messages` channel is already requested from the graph, so the wire contract does not change when it lands. What streams today is the pipeline, which is the honest thing to show for an agent whose answer is assembled from tool results. |
 | Authentication and multi-tenancy | One local stack, one trust boundary, no real data. Auth without a real identity provider and a real data boundary is theatre, and it models none of what makes auth hard. |
-| Database migrations | Five tables. `make clean` drops the volume and the init hook applies the schema again. |
+| Database migrations | Two tables of TRAIL's own. `make clean` drops the volume and the init hook applies the schema again. |
 | An operator console | The `ui` service is a demo of one conversation, not a workplace. No queue, no assignment, no sign-off, no auth. Those belong to a product, and the specialist review step they would serve is the one thing a person should do. |
 | An eval dashboard | `make eval` renders the metrics and the failure taxonomy legibly in a terminal, with no build step. Charting a run nobody has published is the most visible and least informative thing a repository can contain. |
 | Audio, telephony, ASR, TTS | Transport. It attaches at the client boundary, which is why that boundary is a service. Building it first spends week one on codecs and answering-machine detection, and none of the interesting problems live there. |
-| A cloud deployment | **`designed`**, and coming — but as a complement, not a default. A 100% local system cannot prove the audit-trail primitives (IAM, network isolation, retained logs), and those primitives are what the series is actually about. Local buys reproducibility; only a real deployment buys evidence. |
+| A cloud deployment | **Not built, and next.** A 100% local system cannot prove the audit-trail primitives (IAM, network isolation, retained logs), and those primitives are what the series is actually about. Local buys reproducibility; only a real deployment buys evidence. The order is fixed: this local demo first, then an **AWS** deployment of it in its own repository, and only after that — if the evidence asks for it — cost optimisation and a multi-provider shape. |
 
 ---
 
 ## 10. Repository layout
 
-**`shipped`**, except where marked.
-
 ```
 README.md                     This file
 docker-compose.yml            The services
 Dockerfile                    One image, two roles
-Makefile                      The control surface: up · chat · test · lint · clean
+Makefile                      The control surface: up · down · chat · eval · test · test-integration · lint · fmt · clean
 .env.example                  Every variable, with its default and the reason for it
-db/schema.sql                 Almost empty, and §4 says why
+db/schema.sql                 Two tables, and §4 says why only two
 
 src/trail/
-  config.py                   pydantic-settings, TRAIL_ prefix — and the three dials
+  config.py                   pydantic-settings, TRAIL_ prefix — and the dials
   costs.py                    Per-model rates; an unpriced model costs None, never zero
   telemetry.py                OTel SDK → OTLP → Langfuse, and the trace deep links
-  app.py                      FastAPI: POST /threads, /threads/{id}/turns/stream
+  app.py                      FastAPI: /threads, /threads/{id}/turns, /threads/{id}/turns/stream
   cli.py                      trail chat · trail eval — one client, two ways to drive it
   runtime/
-    agent.py                  build_agent: model + tools + gates + persistence
+    agent.py                  AgentSpec and build_agent: model + tools + gates + persistence
+    registry.py               Which example is mounted, resolved from TRAIL_AGENT
+    threads.py                The conversation index the sidebar reads
     checkpointers.py          memory | postgres, as a swappable slot
     events.py                 The wire vocabulary: StageEvent, and the SSE helpers
     turns.py                  One turn as a sequence of frames; both endpoints drain it
     middleware/
-      guards.py               GuardVerdict, InputGuard, OutputGuard, and the dial
+      guards.py               GuardVerdict, GuardSpec, the check combinators, and the dial
       trace.py                The rail, and the span attributes Langfuse promotes
   evals/
     cases.py                  Case, Observation, Finding — and the deterministic checks
@@ -375,18 +368,20 @@ src/trail/
     report.py                 The terminal scorecard: violations first, then numbers
 
 examples/trail_guide/         The agent that explains TRAIL. Two tools, three checks
+  agent.py                    The AgentSpec: prompt, tools, GuardSpec
+  tools.py                    search_docs · stack_status, both offline
   golden.py                   Its twelve cases and its pre-registered thresholds
-ui/                           `extraction` — the browser surface, mid-rewrite
-tests/                        Unit tests offline; integration tests behind a marker
+ui/                           The browser surface: Vite + React, DESIGN.md explains the rail
+tests/                        unit/ offline with coverage; integration/ behind a marker
 ```
 
 ---
 
 ## 11. Licence
 
-**Undecided, and load-bearing.** The collections repository it came from has no LICENSE file, which
-under default copyright means all rights reserved — appropriate for something published to be read
-and argued with, and fatal for something meant to be depended on.
+**Undecided, and load-bearing.** There is no LICENSE file, which under default copyright means all
+rights reserved — appropriate for something published to be read and argued with, and fatal for
+something meant to be depended on.
 
 A scaffold that other people cannot legally instance is not a scaffold. This gets a permissive
 licence before the first public tag, or TRAIL is just a blog post with a repository attached.
@@ -395,9 +390,8 @@ licence before the first public tag, or TRAIL is just a blog post with a reposit
 
 ## 12. Provenance
 
-TRAIL was extracted from the **Banco Aurora early-stage collections agent**, the second entry in The
-Audit Trail — itself a port of a healthcare pre-operative preparation agent, the first. The extraction
-method is §6, and it only worked because there were two instances to compare.
+TRAIL was extracted from two earlier agents built for regulated domains, the second a port of the
+first. The extraction method is §6, and it only worked because there were two instances to compare.
 
 That is the honest version of the rule of three: TRAIL is at two. The interface will be wrong in
-places that only a third domain will find.
+places that only a third domain will find — and the third domain is the next entry in the series.

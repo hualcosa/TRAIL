@@ -14,8 +14,9 @@ not:
 On (2), the trap, written down because it cost this repository a rewrite:
 ``telemetry.py`` is *passive*. Its exporter wrapper aliases ``trail.model`` onto
 ``gen_ai.request.model`` on the way out, and it has a hard guard —
-``if "trail.model" not in attributes: return span_``. The collections build
-produced those attributes inside its own LLM client. That client is gone. If
+``if "trail.model" not in attributes: return span_``. The runtime TRAIL was
+extracted from produced those attributes inside its own LLM client. That client
+is gone. If
 this middleware does not produce them, every trace still arrives, still looks
 fine, and carries no model, no tokens and no cost. The failure is silent by
 construction, which is why ``awrap_model_call`` opens the span itself rather

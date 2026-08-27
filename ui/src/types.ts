@@ -7,7 +7,7 @@
  *
  * The important property of this file is what it does **not** contain. There is
  * no closed list of stage names and no dictionary of Portuguese labels. Both
- * existed in the version of this file written for a collections agent, and both
+ * existed in the version of this file written for the previous agent, and both
  * are the reason that UI could not render any other agent — `runtime/events.py`
  * names that dictionary as the bug it fixed by putting `label` on the wire.
  *

@@ -6,8 +6,8 @@ cannot drift apart.
 
 Two decisions worth naming.
 
-**Prices are data, not constants.** The version of this that lived in the
-collections agent hardcoded one model's rates at module scope. That is correct
+**Prices are data, not constants.** The version of this that TRAIL was
+extracted from hardcoded one model's rates at module scope. That is correct
 right up until the day someone changes ``TRAIL_MODEL``, at which point every
 cost in the system is quietly wrong and nothing says so. Here the table is
 keyed by model and overridable from the environment.
@@ -113,8 +113,8 @@ class Usage:
     ``total_input_tokens`` is every input token the model processed: the
     uncached remainder, what was served from cache, and what was written into
     it. The three are disjoint and their sum is the prompt. Keeping that
-    definition identical to the collections build's is not nostalgia — it is
-    what stops a cost-per-turn chart from changing meaning between versions.
+    definition stable across releases is not pedantry — it is what stops a
+    cost-per-turn chart from changing meaning between versions.
     """
 
     input_tokens: int = 0

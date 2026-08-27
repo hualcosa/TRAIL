@@ -417,7 +417,7 @@ def test_percentile_is_nearest_rank() -> None:
 async def test_a_metric_is_measured_against_the_bar_the_example_registered() -> None:
     client = agent(**{"q": stream("nada")})
     cases = (Case("a", ["q"], [contains("both")]),)
-    bars = {"case_pass_rate": Threshold(0.9, ">=", "v0 collections", "I")}
+    bars = {"case_pass_rate": Threshold(0.9, ">=", "previous release", "I")}
     gs = GoldenSet(version="test-v1", cases=cases, thresholds=bars)
     async with client:
         outcomes = await run_golden_set(gs, client=client)

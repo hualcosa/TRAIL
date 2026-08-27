@@ -14,12 +14,12 @@ not merely plausible.
 
 ## Pass 4 — the conversation redesign
 
-> Passes 1–3 designed a different interface for a different product: a
-> collections agent whose spoken words were pre-approved text, rendered as an
-> NCR carbon-copy form with a tear-off compliance panel. That product no longer
-> exists in this repository, and the document that argued for it asserted the
-> opposite of what is now true. Rather than patch it, this replaces it. The
-> reasoning that survived is folded in below and marked.
+> Passes 1–3 designed a different interface for a different product: an agent
+> whose spoken words were pre-approved text, rendered as a form with a tear-off
+> compliance panel. That product no longer exists in this repository, and the
+> document that argued for it asserted the opposite of what is now true. Rather
+> than patch it, this replaces it. The reasoning that survived is folded in
+> below and marked.
 
 ### What changed, and why the old thesis inverted
 
