@@ -38,6 +38,10 @@ NAMESPACE = ("threads",)
 #: conversations apart in a narrow sidebar, short enough not to wrap twice.
 TITLE_CHARS = 60
 
+#: How many records one listing reads before filtering. See :func:`list_threads`
+#: for why this is a scan rather than a page.
+SCAN_LIMIT = 1_000
+
 
 def title_from(message: str) -> str:
     """A thread title, from the first thing the person asked.
@@ -79,9 +83,9 @@ class ThreadSummary:
 async def open_thread(store: Any, thread_id: str) -> None:
     """Record a thread that has been created but not yet spoken to.
 
-    Written on creation rather than on the first turn so that an abandoned
-    thread is visible as an abandoned thread. The alternative — indexing only
-    what has been used — quietly hides the case where every turn is failing.
+    Written on creation so the record carries a real ``created_at``, and so an
+    abandoned thread exists in the store to be counted. It does **not** reach
+    the sidebar — see :func:`list_threads`.
     """
     if store is None:
         return
@@ -120,15 +124,41 @@ async def record_turn(store: Any, thread_id: str, message: str) -> None:
 async def list_threads(
     store: Any, *, limit: int = 50, offset: int = 0
 ) -> list[ThreadSummary]:
-    """Threads, most recently used first.
+    """Conversations, most recently used first. Threads with no turns are omitted.
 
     Sorted here rather than by the store, because ``asearch`` orders by
     relevance for a semantic query and by nothing in particular without one.
     Recency is the order a sidebar means.
+
+    **The zero-turn filter is a correction, and the reasoning is worth keeping.**
+    Indexing on creation was chosen so an abandoned thread would be visible as
+    one — a real diagnostic, if abandonment were rare. It is not: the browser
+    opens a thread on every page load and on every "new conversation" click, so
+    within an afternoon a third of the list was threads nobody had spoken to.
+    A sidebar full of empty rows is not a diagnostic, it is a sidebar nobody can
+    use.
+
+    The records still exist and still carry their timestamps, so "how many
+    threads were opened and never used" remains answerable. It is a metric, and
+    a metric does not belong in a navigation list.
     """
     if store is None:
         return []
-    items = await store.asearch(NAMESPACE, limit=limit, offset=offset)
+    # Read a bounded window and filter it here, rather than asking the store for
+    # `limit` rows and hoping enough survive. The store cannot filter on a value
+    # it does not index, so a page of records can be a page of nothing — twenty
+    # abandoned threads ahead of one real conversation would return an empty
+    # first page, which reads as "you have no conversations".
+    #
+    # Over-fetching by a multiple only moves that cliff; it does not remove it.
+    # So: one bounded read, filtered, then paged.
+    #
+    # This means the index is not truly paged, and for a local scaffold with a
+    # sidebar that is the right trade — `SCAN_LIMIT` rows is more conversations
+    # than one demo produces, and the alternative is a loop that reads until it
+    # has enough, which is real paging complexity bought for a case nobody has.
+    # When someone does: index `turns` in the store and filter there.
+    items = await store.asearch(NAMESPACE, limit=SCAN_LIMIT)
     summaries = [
         ThreadSummary(
             thread_id=item.key,
@@ -138,9 +168,10 @@ async def list_threads(
             updated_at=str(item.value.get("updated_at") or ""),
         )
         for item in items
+        if int(item.value.get("turns", 0)) > 0
     ]
     summaries.sort(key=lambda summary: summary.updated_at, reverse=True)
-    return summaries
+    return summaries[offset : offset + limit]
 
 
 async def forget(store: Any, thread_id: str) -> None:

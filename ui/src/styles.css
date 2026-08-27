@@ -94,7 +94,13 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
-html, body, #root { height: 100%; }
+/* `dvh` and not `%` or `vh`. Both of those resolve against a viewport that can
+   be taller than what is on screen — a browser window dragged past the bottom
+   edge of the display, or a mobile browser counting the space its own URL bar
+   occupies. The composer is pinned to the bottom of this box, so when the box
+   is taller than the screen the composer is simply not there, and the app looks
+   broken in a way no amount of scrolling fixes. */
+html, body, #root { height: 100dvh; }
 
 body {
   margin: 0;

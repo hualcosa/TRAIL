@@ -52,18 +52,53 @@ def test_a_multiline_question_becomes_one_line() -> None:
 # --------------------------------------------------------------------------
 
 
-async def test_an_opened_thread_is_listed_before_it_is_used(
+async def test_an_opened_thread_is_recorded_but_not_listed(
     store: InMemoryStore,
 ) -> None:
-    """An abandoned thread must be visible as one.
+    """A thread nobody spoke to is a record, not a row.
 
-    Indexing only threads that produced a turn would hide exactly the case
-    worth seeing: every turn failing.
+    This inverts an earlier decision, and the reason is worth keeping. Listing
+    abandoned threads was chosen as a diagnostic — it would show a client whose
+    every turn was failing. It only works if abandonment is rare, and it is not:
+    the browser opens a thread on every page load and on every "new
+    conversation" click, so within an afternoon a third of the list was threads
+    nobody had spoken to.
+
+    The record survives with its timestamps, so the diagnostic is still
+    answerable. It is a metric, and a metric does not belong in a navigation
+    list.
     """
     await open_thread(store, "t1")
-    listed = await list_threads(store)
-    assert [t.thread_id for t in listed] == ["t1"]
-    assert listed[0].turns == 0
+    assert await list_threads(store) == []
+
+    stored = await store.aget(("threads",), "t1")
+    assert stored is not None, "the record must survive, only the row is dropped"
+    assert stored.value["turns"] == 0
+    assert stored.value["created_at"]
+
+
+async def test_the_first_turn_promotes_a_thread_into_the_list(
+    store: InMemoryStore,
+) -> None:
+    await open_thread(store, "t1")
+    await record_turn(store, "t1", "oi")
+    assert [t.thread_id for t in await list_threads(store)] == ["t1"]
+
+
+async def test_a_page_of_empty_threads_does_not_hide_the_real_ones(
+    store: InMemoryStore,
+) -> None:
+    """The filter runs after the store's own paging.
+
+    Twenty abandoned threads ahead of one real conversation must not produce an
+    empty first page — which is what a naive `limit` on the store would do.
+    """
+    for index in range(20):
+        await open_thread(store, f"empty-{index}")
+    await record_turn(store, "real", "oi")
+
+    listed = await list_threads(store, limit=5)
+    assert [t.thread_id for t in listed] == ["real"]
 
 
 async def test_the_first_message_becomes_the_title(store: InMemoryStore) -> None:
