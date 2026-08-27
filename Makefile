@@ -72,9 +72,9 @@ eval: .env ## Run the mounted example's golden set against the running stack (`m
 ui-dev: ## Run the Vite dev server on the host against the running stack (`make up` first)
 	cd ui && npm install && npm run dev
 
-test: ## Run the unit tests — offline, no Docker, no database, no API key
+test: ## Run the unit tests with coverage (fails under 90%) — offline, no Docker, no database, no API key
 	@$(HOST_ENV) TRAIL_LLM_API_KEY=unit-tests-never-call-the-api \
-		$(UV) run --extra dev pytest -m unit
+		$(UV) run --extra dev pytest -m unit --cov
 
 test-integration: ## Run the integration tests against the running stack (`make up` first)
 	@$(HOST_ENV) $(UV) run --extra dev pytest -m integration

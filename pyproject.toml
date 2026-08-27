@@ -53,6 +53,7 @@ dependencies = [
 dev = [
     "pytest>=9.1",
     "pytest-asyncio>=1.4",
+    "pytest-cov>=7",
     "ruff>=0.16",
 ]
 
@@ -145,3 +146,17 @@ markers = [
 
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+# ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+# Measured by `make test`, over the unit tier only: that is the tier that runs
+# everywhere, so it is the only one a threshold can be enforced on. The
+# integration tier adds coverage but only where a stack and a real key exist.
+[tool.coverage.run]
+source = ["trail"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_covered = true

@@ -108,7 +108,7 @@ are no tokens to stream anyway, and the pipeline is the only honest thing to sho
 ```bash
 git clone https://github.com/hualcosa/trail && cd trail
 cp .env.example .env          # set TRAIL_LLM_API_KEY
-make test                     # the unit suite, offline, no credentials needed
+make test                     # the unit suite with coverage (fails under 90%), offline, no credentials needed
 make up                       # the stack
 make chat                     # hold a conversation, and watch the pipeline behind it
 make eval                     # drive the golden set and print the scorecard
