@@ -1,14 +1,32 @@
-# TRAIL — Traced Runtime for Agents, Instrumented Locally
+# TRAIL
 
-A local, full-stack scaffold for building agentic systems that can be **argued with**. Four services
-under Docker Compose — a browser demo, a conversation service, Postgres and Langfuse — plus
-`make eval`, which drives a golden set over the same HTTP interface a human drives. Every turn emits
-a trace. Every trace carries a cost. The thing you measure is the thing you shipped.
+**Traced Runtime for Agents, Instrumented Locally.**
 
-TRAIL is not an agent framework. It does not want to own your prompts, your graph, or your model
-calls — LangGraph, an SDK, or a `while` loop are all fine, and TRAIL never sees inside them. What it
-owns is the part nobody enjoys building and everybody needs by week three: **the spine that makes an
-agent's behaviour observable, reproducible and falsifiable.**
+A local, full-stack scaffold for building agentic systems whose behaviour can be **observed,
+reproduced and argued with**. Every turn exposes the pipeline that produced it. Every model call
+emits a trace. Every trace carries tokens, latency and cost. The golden-set harness measures the
+same HTTP interface that people actually use.
+
+![TRAIL architecture: browser and CLI clients connect to the agent runtime, PostgreSQL, an LLM provider and a self-hosted Langfuse observability stack](docs/assets/trail-architecture.png)
+
+<p align="center">
+  <img alt="Python 3.12+" src="https://img.shields.io/badge/Python-3.12%2B-7c3aed?style=flat-square&logo=python&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-runtime-0e7490?style=flat-square&logo=fastapi&logoColor=white">
+  <img alt="Docker Compose" src="https://img.shields.io/badge/Docker-Compose-7c3aed?style=flat-square&logo=docker&logoColor=white">
+  <img alt="253 unit tests" src="https://img.shields.io/badge/unit_tests-253_passing-0e7490?style=flat-square">
+  <img alt="97% coverage" src="https://img.shields.io/badge/coverage-97%25-7c3aed?style=flat-square">
+</p>
+
+> **The thing you measure is the thing you shipped.**
+
+TRAIL is not an agent framework. Bring LangGraph, an SDK or a `while` loop; TRAIL does not own your
+prompt, graph or model calls. It owns the part every serious agent needs by week three: the runtime
+spine around the agent — HTTP and SSE, guardrails, persistence, telemetry, cost accounting and
+evaluation.
+
+**Start here:** [Quickstart](#3-quickstart) · [Architecture](#4-architecture) ·
+[The extension seam](#5-what-is-yours-and-what-is-trails) · [Example agent](#7-the-example-agent) ·
+[Repository map](#10-repository-layout)
 
 The name is literal. TRAIL is the scaffold behind [**The Audit Trail**](https://github.com/hualcosa)
 — a series on AI platform architecture and observability in regulated industries, banking, financial
